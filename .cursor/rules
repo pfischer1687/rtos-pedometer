@@ -1,0 +1,144 @@
+file_patterns:
+  - "*.cpp"
+  - "*.hpp"
+  - "*.h"
+  - "*.cxx"
+  - "*.cc"
+  - "CMakeLists.txt"
+  - "*.cmake"
+  - "Makefile"
+
+# =========================================================
+# 1. Code Style and Structure
+# =========================================================
+code_style:
+  language: "C++17"
+  conventions:
+    - Use **PascalCase** for class/struct names
+    - Use **camelCase** for methods and variables
+    - Use **SCREAMING_SNAKE_CASE** for constants/macros
+    - Prefix member variables with `_` or `m_` (e.g., `_stepCount`, `m_sampleBuffer`)
+  file_structure:
+    - Separate headers (*.hpp) and implementation (*.cpp)
+    - Organize by functional modules:
+      - imu/
+      - processing/
+      - step_detection/
+      - session/
+      - usb_interface/
+      - led_manager/
+      - utils/
+      - tests/
+
+# =========================================================
+# 2. C++ Features
+# =========================================================
+cpp_features:
+  preferred:
+    - auto for type inference
+    - range-based for loops
+    - constexpr and const for compile-time evaluation
+    - std::array for fixed-size buffers
+    - std::vector only when dynamic allocation is acceptable (rare in real-time)
+    - std::unique_ptr for heap-managed objects (avoid shared_ptr in ISR path)
+    - std::optional for potentially missing values
+    - std::variant for multiple state types
+    - std::string_view for read-only string operations
+  discouraged:
+    - Raw pointers for ownership
+    - Dynamic allocation in ISRs or critical paths
+    - Exceptions in ISR; prefer error codes
+
+# =========================================================
+# 3. Memory Management
+# =========================================================
+memory_management:
+  rules:
+    - Use RAII for peripheral handles and buffers
+    - Avoid heap allocation in real-time threads
+    - Preallocate buffers where possible
+    - Use move semantics for temporary objects
+    - Keep stack usage deterministic
+
+# =========================================================
+# 4. Concurrency and Real-Time
+# =========================================================
+concurrency:
+  rules:
+    - ISR code must be minimal (<100µs)
+    - No blocking operations in ISR
+    - Use lock-free queues or mailboxes for ISR → thread communication
+    - Event flags for signaling between threads
+    - Thread priorities:
+        IMU ISR > Acquisition Thread > Processing Thread > Step Detection > Session Manager > USB > LED Manager
+    - Use RTOS primitives (mbed::EventFlags, Queue) safely
+    - Avoid mutexes in high-frequency threads
+
+# =========================================================
+# 5. Error Handling and Validation
+# =========================================================
+error_handling:
+  rules:
+    - Use error codes in ISR and critical threads
+    - Use exceptions only in non-ISR, non-real-time paths
+    - Validate function inputs at boundaries
+    - Assert invariants in development
+    - Log errors via USB or onboard storage (non-blocking)
+
+# =========================================================
+# 6. Performance
+# =========================================================
+performance:
+  guidelines:
+    - Optimize loops with <algorithm> where possible
+    - Minimize floating-point operations in ISR paths
+    - Precompute filter coefficients
+    - Use fixed-size arrays to avoid dynamic allocation
+    - Profile CPU load with cycle counters or logic analyzers
+
+# =========================================================
+# 7. Testing
+# =========================================================
+testing:
+  rules:
+    - Write unit tests for:
+        - Step detection algorithms
+        - Filtering pipeline
+        - Session state machine
+        - USB command parser
+    - Use mock IMU data for repeatable tests
+    - Integration tests for thread coordination
+    - Use CI for automated validation
+
+# =========================================================
+# 8. Security and Safety
+# =========================================================
+security_safety:
+  rules:
+    - Avoid buffer overflows; use safe array access
+    - Use const-correctness for read-only variables
+    - Validate sensor data ranges
+    - Ensure watchdog feeding in main control thread
+    - Detect I2C bus lockups and handle gracefully
+    - Fail gracefully on sensor errors (maintain minimal functionality)
+
+# =========================================================
+# 9. Documentation
+# =========================================================
+documentation:
+  guidelines:
+    - Doxygen-style comments for classes, methods, and data structures
+    - Document assumptions (e.g., step length, single-user)
+    - Document thread priorities, ISR latency, and buffer sizes
+    - Comment electrical constraints and RTOS considerations
+
+# =========================================================
+# 10. Miscellaneous Embedded Rules
+# =========================================================
+embedded_rules:
+  - Avoid global variables; use singleton pattern sparingly
+  - Prefer constexpr for pin assignments and timing constants
+  - Keep ISR and thread stack sizes minimal and deterministic
+  - Use static_assert for compile-time configuration checks
+  - Maintain deterministic execution order in processing pipeline
+  - Use line-based, bounded USB command buffers
