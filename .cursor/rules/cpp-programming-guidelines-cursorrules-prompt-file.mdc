@@ -1,20 +1,13 @@
 ---
+description: 
+globs: **/*.c,**/*.cpp,**/*.h,**/*.hpp,**/*.cxx,CMakeLists.txt,*.cmake,conanfile.txt,Makefile,**/*.cc
+alwaysApply: false
+---
+# C++ Programming Guidelines
 
-file_patterns:
-  - "*.cpp"
-  - "*.hpp"
-  - "*.h"
-  - "*.cxx"
-  - "*.cc"
-  - "CMakeLists.txt"
-  - "*.cmake"
-  - "Makefile"
+## Code Style and Structure
 
-# =========================================================
-# 1. Code Style and Structure
-# =========================================================
-code_style:
-  language: "C++17"
+  language: "C++20"
   conventions:
     - Use **PascalCase** for class/struct names
     - Use **camelCase** for methods and variables
@@ -32,9 +25,8 @@ code_style:
       - utils/
       - tests/
 
-# =========================================================
-# 2. C++ Features
-# =========================================================
+## C++ Features
+
 cpp_features:
   preferred:
     - auto for type inference
@@ -51,9 +43,8 @@ cpp_features:
     - Dynamic allocation in ISRs or critical paths
     - Exceptions in ISR; prefer error codes
 
-# =========================================================
-# 3. Memory Management
-# =========================================================
+## Memory Management
+
 memory_management:
   rules:
     - Use RAII for peripheral handles and buffers
@@ -62,9 +53,8 @@ memory_management:
     - Use move semantics for temporary objects
     - Keep stack usage deterministic
 
-# =========================================================
-# 4. Concurrency and Real-Time
-# =========================================================
+## Concurrency and Real-Time
+
 concurrency:
   rules:
     - ISR code must be minimal (<100µs)
@@ -76,9 +66,8 @@ concurrency:
     - Use RTOS primitives (mbed::EventFlags, Queue) safely
     - Avoid mutexes in high-frequency threads
 
-# =========================================================
-# 5. Error Handling and Validation
-# =========================================================
+## Error Handling and Validation
+
 error_handling:
   rules:
     - Use error codes in ISR and critical threads
@@ -87,20 +76,18 @@ error_handling:
     - Assert invariants in development
     - Log errors via USB or onboard storage (non-blocking)
 
-# =========================================================
-# 6. Performance
-# =========================================================
+## Performance
+
 performance:
   guidelines:
-    - Optimize loops with <algorithm> where possible
+    - Optimize loops with `<algorithm>` where possible
     - Minimize floating-point operations in ISR paths
     - Precompute filter coefficients
     - Use fixed-size arrays to avoid dynamic allocation
     - Profile CPU load with cycle counters or logic analyzers
 
-# =========================================================
-# 7. Testing
-# =========================================================
+## Testing
+
 testing:
   rules:
     - Write unit tests for:
@@ -112,9 +99,8 @@ testing:
     - Integration tests for thread coordination
     - Use CI for automated validation
 
-# =========================================================
-# 8. Security and Safety
-# =========================================================
+## Security and Safety
+
 security_safety:
   rules:
     - Avoid buffer overflows; use safe array access
@@ -124,9 +110,8 @@ security_safety:
     - Detect I2C bus lockups and handle gracefully
     - Fail gracefully on sensor errors (maintain minimal functionality)
 
-# =========================================================
-# 9. Documentation
-# =========================================================
+## Documentation
+
 documentation:
   guidelines:
     - Doxygen-style comments for classes, methods, and data structures
@@ -134,13 +119,13 @@ documentation:
     - Document thread priorities, ISR latency, and buffer sizes
     - Comment electrical constraints and RTOS considerations
 
-# =========================================================
-# 10. Miscellaneous Embedded Rules
-# =========================================================
+## Miscellaneous Embedded Rules
+
 embedded_rules:
-  - Avoid global variables; use singleton pattern sparingly
-  - Prefer constexpr for pin assignments and timing constants
-  - Keep ISR and thread stack sizes minimal and deterministic
-  - Use static_assert for compile-time configuration checks
-  - Maintain deterministic execution order in processing pipeline
-  - Use line-based, bounded USB command buffers
+
+- Avoid global variables; use singleton pattern sparingly
+- Prefer constexpr for pin assignments and timing constants
+- Keep ISR and thread stack sizes minimal and deterministic
+- Use static_assert for compile-time configuration checks
+- Maintain deterministic execution order in processing pipeline
+- Use line-based, bounded USB command buffers
