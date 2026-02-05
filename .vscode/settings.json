@@ -1,0 +1,32 @@
+{
+    // Without this setting, switching between targets requires you to manually delete cache and reconfigure. 
+    // By using this setting, each variant has its own build dir.
+    "cmake.buildDirectory": "${workspaceFolder}/build/${variant:board}-${variant:buildType}",
+    "cmake.generator": "Ninja",
+    // This reconfigures the UI to add variant & build target selection to the bottom bar, and to hide 
+    // features not used in embedded development.
+    "cmake.configureOnOpen": false,
+    "cmake.options.statusBarVisibility": "compact",
+    "cmake.options.advanced": {
+        "build": {
+            "statusBarVisibility": "visible",
+            "inheritDefault": "hidden"
+        },
+        "launch": {
+            "statusBarVisibility": "visible",
+            "inheritDefault": "hidden"
+        },
+        "debug": {
+            "statusBarVisibility": "visible",
+            "inheritDefault": "hidden"
+        },
+        "cpack": {
+            "statusBarVisibility": "hidden",
+            "inheritDefault": "hidden"
+        },
+        "workflow": {
+            "statusBarVisibility": "hidden",
+            "inheritDefault": "hidden"
+        }
+    }
+}
