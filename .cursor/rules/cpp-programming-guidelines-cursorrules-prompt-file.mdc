@@ -1,3 +1,5 @@
+---
+
 file_patterns:
   - "*.cpp"
   - "*.hpp"
