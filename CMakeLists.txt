@@ -1,5 +1,5 @@
-cmake_minimum_required(VERSION 3.19)
-cmake_policy(VERSION 3.19...3.22)
+cmake_minimum_required(VERSION 4.0)
+cmake_policy(VERSION 4.0...4.2)
 
 set(MBED_APP_JSON_PATH ${CMAKE_CURRENT_SOURCE_DIR}/mbed_app.json5)
 include(mbed-os/tools/cmake/mbed_toolchain_setup.cmake)
