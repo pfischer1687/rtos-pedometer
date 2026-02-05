@@ -21,4 +21,4 @@ board:
       short: NUCLEO_F767ZI
       settings:
         MBED_TARGET: NUCLEO_F767ZI
-        UPLOAD_METHOD: STLINK
+        UPLOAD_METHOD: STM32CUBE

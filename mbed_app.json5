@@ -5,7 +5,7 @@
             "platform.stdio-buffered-serial": 1
         },
         "NUCLEO_F767ZI": {
-            "target.upload-method": "STLINK"
+            "target.upload-method": "STM32CUBE"
         }
     }
 }
