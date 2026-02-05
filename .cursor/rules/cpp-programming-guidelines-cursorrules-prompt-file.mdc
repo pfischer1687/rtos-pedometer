@@ -1,131 +1,99 @@
 ---
-description: 
+description: C++ rules for embedded development using Mbed OS Community Edition (RTOS, ISR-safe, deterministic)
 globs: **/*.c,**/*.cpp,**/*.h,**/*.hpp,**/*.cxx,CMakeLists.txt,*.cmake,conanfile.txt,Makefile,**/*.cc
 alwaysApply: false
 ---
-# C++ Programming Guidelines
+# C++ Development Rules
 
-## Code Style and Structure
+You are a senior C++ developer with expertise in modern C++ (C++20), STL, and system-level programming.
 
-  language: "C++20"
-  conventions:
-    - Use **PascalCase** for class/struct names
-    - Use **camelCase** for methods and variables
-    - Use **SCREAMING_SNAKE_CASE** for constants/macros
-    - Prefix member variables with `_` or `m_` (e.g., `_stepCount`, `m_sampleBuffer`)
-  file_structure:
-    - Separate headers (*.hpp) and implementation (*.cpp)
-    - Organize by functional modules:
-      - imu/
-      - processing/
-      - step_detection/
-      - session/
-      - usb_interface/
-      - led_manager/
-      - utils/
-      - tests/
+## C++ Language
 
-## C++ Features
+- Target C++20 with embedded constraints
+- Avoid RTTI and heavy runtime features
+- Prefer determinism over abstraction
 
-cpp_features:
-  preferred:
-    - auto for type inference
-    - range-based for loops
-    - constexpr and const for compile-time evaluation
-    - std::array for fixed-size buffers
-    - std::vector only when dynamic allocation is acceptable (rare in real-time)
-    - std::unique_ptr for heap-managed objects (avoid shared_ptr in ISR path)
-    - std::optional for potentially missing values
-    - std::variant for multiple state types
-    - std::string_view for read-only string operations
-  discouraged:
-    - Raw pointers for ownership
-    - Dynamic allocation in ISRs or critical paths
-    - Exceptions in ISR; prefer error codes
+## Naming
+
+- Classes and structs: PascalCase
+- Functions and variables: camelCase
+- Constants and macros: SCREAMING_SNAKE_CASE
+- Member variables prefixed with `m_` or `_`
+
+## File Organization
+
+- Headers in .hpp, implementations in .cpp
+- Organize by functional modules (imu, processing, session, usb, utils, tests)
+
+## Mbed OS
+
+- Assume Mbed OS Community Edition with RTOS enabled
+- Use mbed::EventFlags, rtos::Queue, rtos::Thread
+- Do not introduce POSIX or platform-specific APIs
+- Avoid dynamic memory in time-critical paths
+
+## ISR and Real-Time
+
+- ISR code must be minimal and deterministic
+- Do not allocate memory or block in ISR
+- Do not log or perform I/O in ISR
+- Use EventFlags or Queue to signal threads
+- Never take mutexes or throw exceptions in ISR
 
 ## Memory Management
 
-memory_management:
-  rules:
-    - Use RAII for peripheral handles and buffers
-    - Avoid heap allocation in real-time threads
-    - Preallocate buffers where possible
-    - Use move semantics for temporary objects
-    - Keep stack usage deterministic
+- Prefer static or stack allocation
+- Preallocate buffers at startup
+- Avoid new/delete in real-time threads
+- std::vector allowed only with fixed capacity
+- Prefer std::array and fixed-size ring buffers
+- Use RAII for peripherals
 
-## Concurrency and Real-Time
+## C++ Features
 
-concurrency:
-  rules:
-    - ISR code must be minimal (<100µs)
-    - No blocking operations in ISR
-    - Use lock-free queues or mailboxes for ISR → thread communication
-    - Event flags for signaling between threads
-    - Thread priorities:
-        IMU ISR > Acquisition Thread > Processing Thread > Step Detection > Session Manager > USB > LED Manager
-    - Use RTOS primitives (mbed::EventFlags, Queue) safely
-    - Avoid mutexes in high-frequency threads
+- Prefer auto, constexpr, range-based for
+- Prefer std::array, std::optional (non-ISR), std::variant
+- Prefer std::string_view for read-only strings
+- Avoid std::shared_ptr
+- Avoid implicit dynamic allocation
 
-## Error Handling and Validation
+## Error Handling
 
-error_handling:
-  rules:
-    - Use error codes in ISR and critical threads
-    - Use exceptions only in non-ISR, non-real-time paths
-    - Validate function inputs at boundaries
-    - Assert invariants in development
-    - Log errors via USB or onboard storage (non-blocking)
+- Use error codes in ISR and real-time threads
+- Exceptions allowed only in non-real-time paths
+- Validate inputs at module boundaries
+- Use MBED_ASSERT and static_assert
+- Logging must be non-blocking and outside ISR
+
+## Concurrency
+
+- Thread priority order: IMU ISR > Acquisition > Processing > Step Detection > Session > USB > LED
+- Avoid mutexes in high-frequency threads
+- Prefer message passing over shared state
 
 ## Performance
 
-performance:
-  guidelines:
-    - Optimize loops with `<algorithm>` where possible
-    - Minimize floating-point operations in ISR paths
-    - Precompute filter coefficients
-    - Use fixed-size arrays to avoid dynamic allocation
-    - Profile CPU load with cycle counters or logic analyzers
+- Minimize floating-point work in ISR paths
+- Precompute constants and coefficients
+- Avoid unnecessary copies
+- Keep execution time predictable
+
+## Safety
+
+- Prevent buffer overflows
+- Validate sensor ranges
+- Detect and recover from I2C lockups
+- Feed watchdog from main control thread
+- Fail gracefully on peripheral errors
 
 ## Testing
 
-testing:
-  rules:
-    - Write unit tests for:
-        - Step detection algorithms
-        - Filtering pipeline
-        - Session state machine
-        - USB command parser
-    - Use mock IMU data for repeatable tests
-    - Integration tests for thread coordination
-    - Use CI for automated validation
-
-## Security and Safety
-
-security_safety:
-  rules:
-    - Avoid buffer overflows; use safe array access
-    - Use const-correctness for read-only variables
-    - Validate sensor data ranges
-    - Ensure watchdog feeding in main control thread
-    - Detect I2C bus lockups and handle gracefully
-    - Fail gracefully on sensor errors (maintain minimal functionality)
+- Unit test step detection, filters, state machines, USB parsing
+- Use mock sensor data
+- Avoid hardware dependencies in unit tests
 
 ## Documentation
 
-documentation:
-  guidelines:
-    - Doxygen-style comments for classes, methods, and data structures
-    - Document assumptions (e.g., step length, single-user)
-    - Document thread priorities, ISR latency, and buffer sizes
-    - Comment electrical constraints and RTOS considerations
-
-## Miscellaneous Embedded Rules
-
-embedded_rules:
-
-- Avoid global variables; use singleton pattern sparingly
-- Prefer constexpr for pin assignments and timing constants
-- Keep ISR and thread stack sizes minimal and deterministic
-- Use static_assert for compile-time configuration checks
-- Maintain deterministic execution order in processing pipeline
-- Use line-based, bounded USB command buffers
+- Use Doxygen-style comments
+- Document thread priorities, ISR latency, buffer sizes
+- Explain non-obvious design decisions
