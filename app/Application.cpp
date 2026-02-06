@@ -7,9 +7,6 @@
 
 namespace app {
 
-void run()
-{
-    platform::init();
-}
+void run() { platform::init(); }
 
 } // namespace app

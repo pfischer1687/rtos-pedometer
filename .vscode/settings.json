@@ -24,5 +24,12 @@
             "statusBarVisibility": "hidden",
             "inheritDefault": "hidden"
         }
-    }
+    },
+    "C_Cpp.intelliSenseEngine": "disabled",
+    "clangd.arguments": [
+        "--compile-commands-dir=build/NUCLEO_F767ZI-Develop",
+        "--background-index",
+        "--clang-tidy",
+        "--query-driver=C:/arm-gcc/arm-none-eabi-gcc.bat"
+    ]
 }

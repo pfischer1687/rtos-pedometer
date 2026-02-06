@@ -25,7 +25,7 @@ struct ImuSample {
 };
 
 /** Sample rate in Hz. */
-enum class SampleRate : uint8_t {
+enum class SampleRate : uint16_t {
     Hz100 = 100,
     Hz200 = 200,
     Hz500 = 500,

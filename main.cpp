@@ -3,6 +3,6 @@
 
 int main()
 {
-    app::Application::run();
+    app::run();
     return 0;
 }
