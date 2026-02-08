@@ -1,5 +1,6 @@
-/** \file app/Application.cpp
- *  Thread creation, queue wiring, and main loop or thread entry points.
+/**
+ * @file: app/Application.cpp
+ * @brief: Thread creation, queue wiring, and main loop or thread entry points.
  */
 
 #include "app/Application.hpp"
