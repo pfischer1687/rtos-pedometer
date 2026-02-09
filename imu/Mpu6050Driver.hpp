@@ -1,9 +1,10 @@
 /**
  * @file imu/Mpu6050Driver.hpp
+ *
  * @brief MPU-6050 IMU driver
  *
- * NOTE:
- *  - This interface is currently accelerometer-focused, gyroscope samples
+ * @details
+ * This interface is currently accelerometer-focused, gyroscope samples
  * are not included for pedometer MVP, but may be added in the future for gait
  * analysis, etc.
  */
@@ -21,7 +22,7 @@ namespace imu {
 /**
  * @brief Raw IMU sample (device LSB units).
  *
- * NOTE:
+ * @details
  *  - Accelerometer outputs are signed 16-bit values from ACCEL_*OUT registers.
  *  - Scaling to physical units is intentionally left to higher layers.
  *  - Timestamp is captured at read time, not sample time.
@@ -44,7 +45,7 @@ enum class AccelRange : uint8_t {
 /**
  * @brief Digital Low-Pass Filter configuration (CONFIG.DLPF_CFG).
  *
- * NOTE:
+ * @details
  *  - Also controls gyro internal sampling rate (1 kHz vs 8 kHz).
  *  - Accelerometer ADC rate remains 1 kHz.
  */
@@ -61,6 +62,7 @@ enum class DlpfConfig : uint8_t {
 /**
  * @brief Output Data Rate for sensor registers / FIFO / DMP.
  *
+ * @details
  * Internally mapped to SMPLRT_DIV.
  * Effective accel ODR = min(1 kHz, gyro_rate / (1 + divider)).
  */
@@ -96,6 +98,7 @@ public:
   /**
    * @brief Configure accelerometer and sampling behavior.
    *
+   * @details
    * Safe to call only after init().
    */
   platform::Result configure(const ImuConfig &config);
@@ -103,6 +106,7 @@ public:
   /**
    * @brief Read one accelerometer sample.
    *
+   * @details
    * Reads ACCEL_XOUT_H .. ACCEL_ZOUT_L in a single burst.
    */
   platform::Result readSample(ImuSample &sample);
@@ -125,27 +129,33 @@ private:
 
   /**
    * @brief Write a single register.
+   *
    * @param reg Register address
    * @param value Register value
+   *
    * @return Result
    */
   platform::Result writeReg(Register reg, uint8_t value);
 
   /**
    * @brief Read multiple registers.
+   *
    * @param start Register address
    * @param buf Buffer to store the registers
    * @param len Number of registers to read
+   *
    * @return Result
    */
   platform::Result readRegs(Register start, uint8_t *buf, size_t len);
 
   /**
    * @brief Convert OutputDataRate to sample rate divider.
+   *
    * @param odr OutputDataRate
+   *
    * @return Sample rate divider
    *
-   * NOTE:
+   * @details
    *  SampleRate = gyro_rate / (1 + SMPLRT_DIV)
    */
   static uint8_t odrToDivider(OutputDataRate odr);
