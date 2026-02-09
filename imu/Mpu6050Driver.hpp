@@ -1,38 +1,38 @@
 /**
- * @file imu/Mpu6050AccelDriver.hpp
- * @brief Minimal MPU-6050 accelerometer driver (no gyro, no DMP).
+ * @file imu/Mpu6050Driver.hpp
+ * @brief MPU-6050 IMU driver
  *
- * Responsibilities:
- *  - Owns register programming
- *  - Provides raw accel samples in LSB
- *  - No application logic
+ * NOTE:
+ *  - This interface is currently accelerometer-focused, gyroscope samples
+ * are not included for pedometer MVP, but may be added in the future for gait
+ * analysis, etc.
  */
 
-#ifndef IMU_MPU6050_ACCEL_DRIVER_HPP
-#define IMU_MPU6050_ACCEL_DRIVER_HPP
+#ifndef IMU_MPU6050_DRIVER_HPP
+#define IMU_MPU6050_DRIVER_HPP
 
 #include "platform/I2CProvider.hpp"
 #include "platform/Platform.hpp"
+#include <array>
 #include <cstdint>
 
 namespace imu {
 
 /**
- * @brief Raw accelerometer sample (LSB).
+ * @brief Raw IMU sample (device LSB units).
  *
- * Units:
- *  - accel: signed 16-bit, scale depends on AFS_SEL
- *  - timestamp: platform microseconds
+ * NOTE:
+ *  - Accelerometer outputs are signed 16-bit values from ACCEL_*OUT registers.
+ *  - Scaling to physical units is intentionally left to higher layers.
+ *  - Timestamp is captured at read time, not sample time.
  */
-struct AccelSample {
-  int16_t x;
-  int16_t y;
-  int16_t z;
+struct ImuSample {
+  std::array<int16_t, 3> accel; // X, Y, Z
   platform::TickUs timestampUs;
 };
 
 /**
- * @brief Accelerometer full-scale range (datasheet AFS_SEL).
+ * @brief Accelerometer full-scale range (CONFIG.AFS_SEL).
  */
 enum class AccelRange : uint8_t {
   PlusMinus2G = 0,  // 16384 LSB/g
@@ -42,59 +42,117 @@ enum class AccelRange : uint8_t {
 };
 
 /**
- * @brief Digital low-pass filter configuration.
+ * @brief Digital Low-Pass Filter configuration (CONFIG.DLPF_CFG).
  *
- * Applies to accel signal conditioning.
+ * NOTE:
+ *  - Also controls gyro internal sampling rate (1 kHz vs 8 kHz).
+ *  - Accelerometer ADC rate remains 1 kHz.
  */
-enum class AccelDlpf : uint8_t {
-  Hz5 = 6,
+enum class DlpfConfig : uint8_t {
+  Off = 0, // ~260 Hz accel bandwidth, 0 ms delay
+  Hz184 = 1,
+  Hz94 = 2,
+  Hz44 = 3,
+  Hz21 = 4,
   Hz10 = 5,
-  Hz20 = 4,
-  Hz42 = 3,
-  Hz98 = 2,
-  Hz188 = 1,
-  Off = 0,
+  Hz5 = 6,
 };
 
 /**
- * @brief Output data rate configuration.
+ * @brief Output Data Rate for sensor registers / FIFO / DMP.
  *
- * Accel internal rate is 1 kHz.
+ * Internally mapped to SMPLRT_DIV.
+ * Effective accel ODR = min(1 kHz, gyro_rate / (1 + divider)).
  */
-struct AccelOdr {
-  uint16_t hz;     // Desired output rate (e.g. 100 Hz)
-  uint8_t divider; // SMPLRT_DIV value
+enum class OutputDataRate : uint16_t {
+  Hz1000 = 1000,
+  Hz500 = 500,
+  Hz200 = 200,
+  Hz100 = 100,
+  Hz50 = 50,
 };
 
 /**
- * @brief MPU-6050 accelerometer configuration.
+ * @brief MPU-6050 configuration.
  */
-struct AccelConfig {
+struct ImuConfig {
   AccelRange range;
-  AccelDlpf dlpf;
-  AccelOdr odr;
+  DlpfConfig dlpf;
+  OutputDataRate odr;
 };
 
 /**
- * @brief MPU-6050 accelerometer-only driver.
- *
- * Threading:
- *  - Blocking I2C
- *  - Call from acquisition thread only
+ * @brief MPU-6050 driver.
  */
-class Mpu6050AccelDriver {
+class Mpu6050Driver {
 public:
-  explicit Mpu6050AccelDriver(platform::I2CProvider &i2c);
+  explicit Mpu6050Driver(platform::I2CProvider &i2c);
 
+  /**
+   * @brief Initialize device and bring it out of reset.
+   */
   platform::Result init();
-  platform::Result configure(const AccelConfig &config);
-  platform::Result readSample(AccelSample &sample);
+
+  /**
+   * @brief Configure accelerometer and sampling behavior.
+   *
+   * Safe to call only after init().
+   */
+  platform::Result configure(const ImuConfig &config);
+
+  /**
+   * @brief Read one accelerometer sample.
+   *
+   * Reads ACCEL_XOUT_H .. ACCEL_ZOUT_L in a single burst.
+   */
+  platform::Result readSample(ImuSample &sample);
 
 private:
+  static constexpr uint8_t DefaultI2cAddress = 0x68;
+  static constexpr uint8_t WhoAmIValue = 0x68;
+
+  /**
+   * @brief MPU-6050 register map (subset).
+   */
+  enum class Register : uint8_t {
+    SMPLRT_DIV = 0x19,
+    CONFIG = 0x1A,
+    ACCEL_CONFIG = 0x1C,
+    PWR_MGMT_1 = 0x6B,
+    ACCEL_XOUT_H = 0x3B,
+    WHO_AM_I = 0x75,
+  };
+
+  /**
+   * @brief Write a single register.
+   * @param reg Register address
+   * @param value Register value
+   * @return Result
+   */
+  platform::Result writeReg(Register reg, uint8_t value);
+
+  /**
+   * @brief Read multiple registers.
+   * @param start Register address
+   * @param buf Buffer to store the registers
+   * @param len Number of registers to read
+   * @return Result
+   */
+  platform::Result readRegs(Register start, uint8_t *buf, size_t len);
+
+  /**
+   * @brief Convert OutputDataRate to sample rate divider.
+   * @param odr OutputDataRate
+   * @return Sample rate divider
+   *
+   * NOTE:
+   *  SampleRate = gyro_rate / (1 + SMPLRT_DIV)
+   */
+  static uint8_t odrToDivider(OutputDataRate odr);
+
   platform::I2CProvider &_i2c;
-  static constexpr uint8_t I2C_ADDR = 0x68;
 };
 
 } // namespace imu
 
-#endif // IMU_MPU6050_ACCEL_DRIVER_HPP
+#endif // IMU_MPU6050_DRIVER_HPP
