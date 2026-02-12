@@ -1,6 +1,6 @@
-/** \file session/SessionManager.hpp
- *  Session state, step count aggregation, and persistence. Application logic only.
- *  Ownership: owns session state; consumes step events; exposes count and state to USB/app.
+/**
+ * @file session/SessionManager.hpp
+ * @brief Session state, step count aggregation, and persistence
  */
 
 #ifndef SESSION_SESSIONMANAGER_HPP
@@ -11,50 +11,82 @@
 
 namespace session {
 
-/** Session state for the motion monitoring system. */
+/**
+ * @enum SessionState
+ * @brief Session state for the motion monitoring system.
+ */
 enum class SessionState : uint8_t {
-    Idle,
-    Active,
-    Paused,
-    Stopped,
+  Idle,
+  Active,
+  Paused,
+  Stopped,
 };
 
-/** Snapshot of current session for inspection (USB, logging). */
+/**
+ * @struct SessionSnapshot
+ * @brief Snapshot of current session for inspection (USB, logging).
+ */
 struct SessionSnapshot {
-    SessionState state;
-    uint32_t stepCount;
-    uint32_t sessionStartTimeUs;
-    uint32_t totalDurationMs;
+  SessionState state{SessionState::Idle};
+  uint32_t stepCount{0};
+  uint32_t sessionStartTimeUs{0};
+  uint32_t totalDurationMs{0};
 };
 
-/** Session manager: state machine, step count, optional persistence. */
+/**
+ * @class SessionManager
+ * @brief Session manager: state machine, step count, optional persistence.
+ */
 class SessionManager {
 public:
-    SessionManager() = default;
+  /**
+   * @brief Constructor.
+   */
+  SessionManager() noexcept = default;
 
-    /** Start a new session (reset step count, set state Active). */
-    void start();
+  /**
+   * @brief Start a new session (reset step count, set state Active).
+   */
+  void start() noexcept;
 
-    /** Pause session (retain count). */
-    void pause();
+  /**
+   * @brief Pause session (retain count).
+   */
+  void pause() noexcept;
 
-    /** Resume from pause. */
-    void resume();
+  /**
+   * @brief Resume from pause.
+   */
+  void resume() noexcept;
 
-    /** Stop session (finalize, optionally persist). */
-    void stop();
+  /**
+   * @brief Stop session (finalize, optionally persist).
+   */
+  void stop() noexcept;
 
-    /** Notify one step (called from step detection pipeline). */
-    void onStep(const step_detection::StepEvent& event);
+  /**
+   * @brief Notify one step (called from step detection pipeline).
+   * @param event Step event.
+   */
+  void onStep(const step_detection::StepEvent &event) noexcept;
 
-    /** Get current snapshot (thread-safe via queue or copy). */
-    void getSnapshot(SessionSnapshot& out) const;
+  /**
+   * @brief Get current snapshot (thread-safe via queue or copy).
+   * @param out Snapshot output.
+   */
+  void getSnapshot(SessionSnapshot &out) const noexcept;
 
-    /** Return current step count. */
-    uint32_t getStepCount() const;
+  /**
+   * @brief Return current step count.
+   * @return Step count.
+   */
+  uint32_t getStepCount() const noexcept;
 
-    /** Return current state. */
-    SessionState getState() const;
+  /**
+   * @brief Return current state.
+   * @return Current state.
+   */
+  SessionState getState() const noexcept;
 };
 
 } // namespace session

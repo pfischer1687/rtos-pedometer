@@ -1,6 +1,5 @@
 /**
  * @file: app/Application.cpp
- *
  * @brief: Thread creation, queue wiring, and main loop or thread entry points.
  */
 
@@ -9,6 +8,12 @@
 
 namespace app {
 
-void run() { platform::init(); }
+[[noreturn]] void run() noexcept {
+  platform::init();
+  
+  while (true) {
+    platform::tickSource().nowUs();
+  }
+}
 
 } // namespace app
