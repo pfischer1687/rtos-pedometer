@@ -1,6 +1,6 @@
-/** \file signal_processing/SignalProcessing.hpp
- *  Filtering and feature extraction on IMU data. Algorithms only; no hardware access.
- *  Ownership: consumes raw samples, produces processed vectors or magnitudes.
+/**
+ * @file signal_processing/SignalProcessing.hpp
+ * @brief Filtering and feature extraction on IMU data.
  */
 
 #ifndef SIGNAL_PROCESSING_SIGNALPROCESSING_HPP
@@ -8,42 +8,69 @@
 
 #include "imu/Mpu6050Driver.hpp"
 #include <cstddef>
-#include <array>
 
 namespace signal_processing {
 
-/** Processed sample: filtered accel magnitude (or axis) and optional features. */
+/**
+ * @struct ProcessedSample
+ * @brief Processed sample: filtered accel magnitude (or axis) and optional
+ * features.
+ */
 struct ProcessedSample {
-    float magnitude;       // e.g. L2 norm of accel after high-pass
-    float accelX;
-    float accelY;
-    float accelZ;
-    uint32_t timestampUs;
+  float magnitude{0.0f}; // e.g. L2 norm of accel after high-pass
+  float accelX{0.0f};
+  float accelY{0.0f};
+  float accelZ{0.0f};
+  uint32_t timestampUs{0};
 };
 
-/** Configuration for filter pipeline (fixed at init). */
+/**
+ * @struct FilterConfig
+ * @brief Configuration for filter pipeline (fixed at init).
+ */
 struct FilterConfig {
-    float highPassCutoffHz;
-    float lowPassCutoffHz;
-    uint32_t sampleRateHz;
+  float highPassCutoffHz{0.0f};
+  float lowPassCutoffHz{0.0f};
+  uint32_t sampleRateHz{0};
 };
 
-/** Stateless filter pipeline. Process one or a batch of raw samples. */
+/**
+ * @class SignalProcessor
+ * @brief Stateless filter pipeline. Process one or a batch of raw samples.
+ */
 class SignalProcessor {
 public:
-    SignalProcessor() = default;
+  /**
+   * @brief Constructor.
+   */
+  SignalProcessor() noexcept = default;
 
-    /** Set filter coefficients from config. */
-    void setConfig(const FilterConfig& config);
+  /**
+   * @brief Set filter coefficients from config.
+   * @param config Filter configuration.
+   */
+  void setConfig(const FilterConfig &config) noexcept;
 
-    /** Process one raw sample into \p out. */
-    void process(const imu::ImuSample& in, ProcessedSample& out);
+  /**
+   * @brief Process one raw sample into \p out.
+   * @param in Raw sample.
+   * @param out Processed sample.
+   */
+  void process(const imu::ImuSample &in, ProcessedSample &out) noexcept;
 
-    /** Process \p count samples from \p in into \p out. */
-    void processBatch(const imu::ImuSample* in, ProcessedSample* out, size_t count);
+  /**
+   * @brief Process \p count samples from \p in into \p out.
+   * @param in Raw samples.
+   * @param out Processed samples.
+   * @param count Number of samples to process.
+   */
+  void processBatch(const imu::ImuSample *in, ProcessedSample *out,
+                    size_t count) noexcept;
 
-    /** Reset filter state (e.g. after idle). */
-    void reset();
+  /**
+   * @brief Reset filter state (e.g. after idle).
+   */
+  void reset() noexcept;
 };
 
 } // namespace signal_processing
