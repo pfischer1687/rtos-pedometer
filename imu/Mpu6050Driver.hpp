@@ -1,8 +1,6 @@
 /**
  * @file imu/Mpu6050Driver.hpp
- *
  * @brief MPU-6050 IMU driver
- *
  * @details
  * This interface is currently accelerometer-focused, gyroscope samples
  * are not included for pedometer MVP, but may be added in the future for gait
@@ -14,25 +12,27 @@
 
 #include "platform/I2CProvider.hpp"
 #include "platform/Platform.hpp"
+
 #include <array>
 #include <cstdint>
 
 namespace imu {
 
 /**
+ * @struct ImuSample
  * @brief Raw IMU sample (device LSB units).
- *
  * @details
  *  - Accelerometer outputs are signed 16-bit values from ACCEL_*OUT registers.
  *  - Scaling to physical units is intentionally left to higher layers.
  *  - Timestamp is captured at read time, not sample time.
  */
 struct ImuSample {
-  std::array<int16_t, 3> accel; // X, Y, Z
-  platform::TickUs timestampUs;
+  std::array<int16_t, 3> accel{{0, 0, 0}}; // X, Y, Z
+  platform::TickUs timestampUs{0};
 };
 
 /**
+ * @enum AccelRange
  * @brief Accelerometer full-scale range (CONFIG.AFS_SEL).
  */
 enum class AccelRange : uint8_t {
@@ -43,8 +43,8 @@ enum class AccelRange : uint8_t {
 };
 
 /**
+ * @enum DlpfConfig
  * @brief Digital Low-Pass Filter configuration (CONFIG.DLPF_CFG).
- *
  * @details
  *  - Also controls gyro internal sampling rate (1 kHz vs 8 kHz).
  *  - Accelerometer ADC rate remains 1 kHz.
@@ -60,8 +60,8 @@ enum class DlpfConfig : uint8_t {
 };
 
 /**
+ * @enum OutputDataRate
  * @brief Output Data Rate for sensor registers / FIFO / DMP.
- *
  * @details
  * Internally mapped to SMPLRT_DIV.
  * Effective accel ODR = min(1 kHz, gyro_rate / (1 + divider)).
@@ -75,47 +75,65 @@ enum class OutputDataRate : uint16_t {
 };
 
 /**
+ * @struct ImuConfig
  * @brief MPU-6050 configuration.
  */
 struct ImuConfig {
-  AccelRange range;
-  DlpfConfig dlpf;
-  OutputDataRate odr;
+  AccelRange range{AccelRange::PlusMinus2G};
+  DlpfConfig dlpf{DlpfConfig::Hz44};
+  OutputDataRate odr{OutputDataRate::Hz100};
 };
 
 /**
+ * @class Mpu6050Driver
  * @brief MPU-6050 driver.
  */
 class Mpu6050Driver {
 public:
-  explicit Mpu6050Driver(platform::I2CProvider &i2c);
+  /**
+   * @brief Constructor.
+   * @param i2c I2C provider.
+   * @param tickSource Microsecond tick source.
+   */
+  explicit Mpu6050Driver(platform::II2CProvider &i2c,
+                         platform::ITickSource &tickSource) noexcept;
 
   /**
    * @brief Initialize device and bring it out of reset.
+   * @return Result.
    */
-  platform::Result init();
+  platform::Result init() noexcept;
 
   /**
    * @brief Configure accelerometer and sampling behavior.
-   *
+   * @param config Configuration.
+   * @return Result.
    * @details
    * Safe to call only after init().
    */
-  platform::Result configure(const ImuConfig &config);
+  platform::Result configure(const ImuConfig &config) noexcept;
 
   /**
    * @brief Read one accelerometer sample.
-   *
+   * @param sample Sample to read into.
+   * @return Result.
    * @details
    * Reads ACCEL_XOUT_H .. ACCEL_ZOUT_L in a single burst.
    */
-  platform::Result readSample(ImuSample &sample);
+  platform::Result readSample(ImuSample &sample) noexcept;
+
+  /**
+   * @brief Check if the driver is initialized.
+   * @return True if initialized, false otherwise.
+   */
+  bool isInitialized() const noexcept { return _initialized; }
 
 private:
   static constexpr uint8_t DefaultI2cAddress = 0x68;
   static constexpr uint8_t WhoAmIValue = 0x68;
 
   /**
+   * @enum Register
    * @brief MPU-6050 register map (subset).
    */
   enum class Register : uint8_t {
@@ -129,38 +147,37 @@ private:
 
   /**
    * @brief Write a single register.
-   *
    * @param reg Register address
    * @param value Register value
-   *
+   * @param timeoutMs Timeout in milliseconds.
    * @return Result
    */
-  platform::Result writeReg(Register reg, uint8_t value);
+  platform::Result writeReg(Register reg, uint8_t value,
+                            uint32_t timeoutMs) noexcept;
 
   /**
    * @brief Read multiple registers.
-   *
    * @param start Register address
    * @param buf Buffer to store the registers
    * @param len Number of registers to read
-   *
+   * @param timeoutMs Timeout in milliseconds.
    * @return Result
    */
-  platform::Result readRegs(Register start, uint8_t *buf, size_t len);
+  platform::Result readRegs(Register start, uint8_t *buf, size_t len,
+                            uint32_t timeoutMs) noexcept;
 
   /**
    * @brief Convert OutputDataRate to sample rate divider.
-   *
    * @param odr OutputDataRate
-   *
    * @return Sample rate divider
-   *
    * @details
    *  SampleRate = gyro_rate / (1 + SMPLRT_DIV)
    */
-  static uint8_t odrToDivider(OutputDataRate odr);
+  static uint8_t odrToDivider(OutputDataRate odr) noexcept;
 
-  platform::I2CProvider &_i2c;
+  platform::II2CProvider &_i2c;
+  platform::ITickSource &_tickSource;
+  bool _initialized{false};
 };
 
 } // namespace imu
