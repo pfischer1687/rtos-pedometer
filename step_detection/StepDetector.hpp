@@ -1,46 +1,85 @@
-/** \file step_detection/StepDetector.hpp
- *  Step detection algorithm on processed magnitude/features. No hardware access.
- *  Ownership: consumes ProcessedSample stream; emits step events.
+/**
+ * @file step_detection/StepDetector.hpp
+ * @brief Step detection algorithm on processed magnitude/features.
  */
 
 #ifndef STEP_DETECTION_STEPDETECTOR_HPP
 #define STEP_DETECTION_STEPDETECTOR_HPP
 
 #include "signal_processing/SignalProcessing.hpp"
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 
 namespace step_detection {
 
-/** Parameters for threshold and timing (fixed or tuned). */
+/**
+ * @struct StepDetectorConfig
+ * @brief Parameters for threshold and timing (fixed or tuned).
+ */
 struct StepDetectorConfig {
-    float magnitudeThreshold;
-    uint32_t minStepIntervalMs;
-    uint32_t maxStepIntervalMs;
+  float magnitudeThreshold{0.0f};
+  uint32_t minStepIntervalMs{0};
+  uint32_t maxStepIntervalMs{0};
 };
 
-/** Callback or event: one step detected at timestamp. */
+/**
+ * @struct StepEvent
+ * @brief Callback or event: one step detected at timestamp.
+ */
 struct StepEvent {
-    uint32_t timestampUs;
-    uint32_t stepIndex;  // running count in current session
+  uint32_t timestampUs{0};
+  uint32_t stepIndex{0}; // running count in current session
 };
 
-/** Step detector: stateful, processes stream of ProcessedSample. */
+/**
+ * @class StepDetector
+ * @brief Step detector: stateful, processes stream of ProcessedSample.
+ */
 class StepDetector {
 public:
-    StepDetector() = default;
+  /**
+   * @brief Constructor.
+   */
+  StepDetector() noexcept = default;
 
-    void setConfig(const StepDetectorConfig& config);
+  /**
+   * @brief Set configuration.
+   * @param config Step detector configuration.
+   */
+  void setConfig(const StepDetectorConfig &config) noexcept;
 
-    /** Process one sample; may produce a step (return true and fill \p event). */
-    bool process(const signal_processing::ProcessedSample& sample, StepEvent& event);
+  /**
+   * @brief Process one sample; may produce a step (return true and fill \p
+   * event).
+   * @param sample Processed sample.
+   * @param event Step event.
+   * @return True if a step was detected.
+   */
+  bool process(const signal_processing::ProcessedSample &sample,
+               StepEvent &event) noexcept;
 
-    /** Process a batch; returns number of steps detected (events written to \p events). */
-    size_t processBatch(const signal_processing::ProcessedSample* samples, size_t count,
-                        StepEvent* events, size_t maxEvents);
+  /**
+   * @brief Process a batch; returns number of steps detected (events written to
+   * \p events).
+   * @param samples Processed samples.
+   * @param count Number of samples to process.
+   * @param events Step events.
+   * @param maxEvents Maximum number of events to write.
+   * @return Number of steps detected.
+   */
+  size_t processBatch(const signal_processing::ProcessedSample *samples,
+                      size_t count, StepEvent *events,
+                      size_t maxEvents) noexcept;
 
-    /** Reset state (e.g. new session). */
-    void reset();
+  /**
+   * @brief Reset state (e.g. new session).
+   */
+  void reset() noexcept;
+
+private:
+  StepDetectorConfig _config{};
+  uint32_t _lastStepTimeUs{0};
+  uint32_t _stepCounter{0};
 };
 
 } // namespace step_detection

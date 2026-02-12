@@ -1,8 +1,19 @@
-#include "mbed.h"
-#include "app/Application.hpp"
+/**
+ * @file main.cpp
+ * @brief Entry point for the motion monitoring system.
+ *
+ * @details
+ * Initializes the application and starts the RTOS scheduler.
+ * Does not return.
+ */
 
-int main()
-{
-    app::run();
-    return 0;
+#include "app/Application.hpp"
+#include "mbed.h"
+
+[[noreturn]] int main() {
+  app::run();
+
+  while (true) {
+    __NOP();
+  }
 }

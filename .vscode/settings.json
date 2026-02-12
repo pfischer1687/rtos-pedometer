@@ -31,5 +31,8 @@
         "--background-index",
         "--clang-tidy",
         "--query-driver=C:/arm-gcc/arm-none-eabi-gcc.bat"
-    ]
+    ],
+    "yaml.schemas": {
+        "file:///dev/null": "*.json"
+    }
 }
