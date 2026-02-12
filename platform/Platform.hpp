@@ -115,6 +115,18 @@ IWatchdog &watchdog() noexcept;
  */
 Result init() noexcept;
 
+/**
+ * @brief Busy-wait delay in microseconds. Deterministic; not for long delays.
+ * @param us Microseconds to wait.
+ */
+void delayUs(uint32_t us) noexcept;
+
+/**
+ * @brief Busy-wait delay in milliseconds. Use sparingly; prefer thread sleep for long waits.
+ * @param ms Milliseconds to wait.
+ */
+void delayMs(uint32_t ms) noexcept;
+
 } // namespace platform
 
 #endif /* PLATFORM_PLATFORM_HPP */

@@ -27,12 +27,14 @@ set(APP_SOURCES
     main.cpp
     app/Application.cpp
     platform/Platform.cpp
+    platform/Gpio.cpp
+    platform/I2CProvider.cpp
     imu/Mpu6050Driver.cpp
     signal_processing/SignalProcessing.cpp
     step_detection/StepDetector.cpp
     session/SessionManager.cpp
     usb/UsbInterface.cpp
-    led/LedManager.cpp
+    led/RecordingLed.cpp
 )
 add_executable(${PROJECT_NAME} ${APP_SOURCES})
 
