@@ -39,9 +39,6 @@ struct SessionSnapshot {
  */
 class SessionManager {
 public:
-  /**
-   * @brief Constructor.
-   */
   SessionManager() noexcept = default;
 
   /**

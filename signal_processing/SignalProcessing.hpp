@@ -40,9 +40,6 @@ struct FilterConfig {
  */
 class SignalProcessor {
 public:
-  /**
-   * @brief Constructor.
-   */
   SignalProcessor() noexcept = default;
 
   /**

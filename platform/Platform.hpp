@@ -25,6 +25,7 @@ enum class Result : uint8_t {
   InvalidState = 4,
   NotInitialized = 5,
   HardwareFault = 6,
+  InvalidArgument = 7,
 };
 
 /**
@@ -122,7 +123,8 @@ Result init() noexcept;
 void delayUs(uint32_t us) noexcept;
 
 /**
- * @brief Busy-wait delay in milliseconds. Use sparingly; prefer thread sleep for long waits.
+ * @brief Busy-wait delay in milliseconds. Use sparingly; prefer thread sleep
+ * for long waits.
  * @param ms Milliseconds to wait.
  */
 void delayMs(uint32_t ms) noexcept;

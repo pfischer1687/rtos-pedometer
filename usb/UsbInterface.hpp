@@ -49,9 +49,6 @@ struct ParsedCommand {
  */
 class UsbInterface {
 public:
-  /**
-   * @brief Constructor.
-   */
   UsbInterface() noexcept = default;
 
   /**

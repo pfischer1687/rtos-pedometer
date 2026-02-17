@@ -23,39 +23,34 @@ public:
 
   /**
    * @brief Write then read in one transaction. Returns Ok on success.
-   * @param devAddr Device address.
+   * @param addr7bit Device address.
    * @param txData Transmit data.
    * @param txLen Length of transmit data.
    * @param rxData Receive data.
    * @param rxLen Length of receive data.
-   * @param timeoutMs Timeout in milliseconds.
    * @return Result.
    */
-  virtual Result transfer(uint8_t devAddr, const uint8_t *txData, size_t txLen,
-                          uint8_t *rxData, size_t rxLen,
-                          uint32_t timeoutMs) noexcept = 0;
+  virtual Result transfer(uint8_t addr7bit, const uint8_t *txData, size_t txLen,
+                          uint8_t *rxData, size_t rxLen) noexcept = 0;
 
   /**
    * @brief Write only.
-   * @param devAddr Device address.
+   * @param addr7bit Device address.
    * @param data Data to write.
    * @param len Length of data to write.
-   * @param timeoutMs Timeout in milliseconds.
    * @return Result.
    */
-  virtual Result write(uint8_t devAddr, const uint8_t *data, size_t len,
-                       uint32_t timeoutMs) noexcept = 0;
+  virtual Result write(uint8_t addr7bit, const uint8_t *data,
+                       size_t len) noexcept = 0;
 
   /**
    * @brief Read only.
-   * @param devAddr Device address.
+   * @param addr7bit Device address.
    * @param data Data to read.
    * @param len Length of data to read.
-   * @param timeoutMs Timeout in milliseconds.
    * @return Result.
    */
-  virtual Result read(uint8_t devAddr, uint8_t *data, size_t len,
-                      uint32_t timeoutMs) noexcept = 0;
+  virtual Result read(uint8_t addr7bit, uint8_t *data, size_t len) noexcept = 0;
 };
 
 /**

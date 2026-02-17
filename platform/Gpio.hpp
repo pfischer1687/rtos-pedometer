@@ -1,39 +1,47 @@
 /**
  * @file platform/Gpio.hpp
- * @brief GPIO abstraction: input interrupt (e.g. MPU-6050 data-ready) and LED output.
+ * @brief GPIO abstraction: input interrupt (e.g. MPU-6050 data-ready) and LED
+ * output.
  * @details
- * - Data-ready ISR must only invoke a user callback (e.g. set RTOS flag); no blocking or allocation.
+ * - Data-ready ISR must only invoke a user callback (e.g. set RTOS flag); no
+ * blocking or allocation.
  * - LED is a simple digital output for status indication.
  */
 
 #ifndef PLATFORM_GPIO_HPP
 #define PLATFORM_GPIO_HPP
 
-#include "platform/Platform.hpp"
-
 namespace platform {
 
 /**
- * @brief Callback type for data-ready interrupt. Invoked from ISR context; must be minimal.
+ * @typedef DataReadyCallback
+ * @brief Callback type for data-ready interrupt.
  */
 using DataReadyCallback = void (*)(void);
 
 /**
  * @interface IDataReadyInput
- * @brief Abstract input for IMU data-ready interrupt. App sets callback; ISR only calls it.
+ * @brief Abstract input for IMU data-ready interrupt.
  */
 class IDataReadyInput {
 public:
-    virtual ~IDataReadyInput() = default;
+  virtual ~IDataReadyInput() = default;
 
-    /** Set callback invoked on data-ready (rising edge). Call from thread context only. */
-    virtual void setCallback(DataReadyCallback cb) noexcept = 0;
+  /**
+   * @brief Set callback invoked on data-ready (rising edge).
+   * @param cb Callback function.
+   */
+  virtual void setCallback(DataReadyCallback cb) noexcept = 0;
 
-    /** Enable the data-ready interrupt. */
-    virtual void enable() noexcept = 0;
+  /**
+   * @brief Enable the data-ready interrupt.
+   */
+  virtual void enable() noexcept = 0;
 
-    /** Disable the data-ready interrupt. */
-    virtual void disable() noexcept = 0;
+  /**
+   * @brief Disable the data-ready interrupt.
+   */
+  virtual void disable() noexcept = 0;
 };
 
 /**
@@ -42,21 +50,24 @@ public:
  */
 class ILedOutput {
 public:
-    virtual ~ILedOutput() = default;
+  virtual ~ILedOutput() = default;
 
-    /** Set LED on (true) or off (false). */
-    virtual void set(bool on) noexcept = 0;
+  /**
+   * @brief Set LED on (true) or off (false).
+   * @param on true = on, false = off.
+   */
+  virtual void set(bool on) noexcept = 0;
 };
 
 /**
  * @brief Get the data-ready input (MPU-6050 INT pin).
  */
-IDataReadyInput& dataReadyInput() noexcept;
+IDataReadyInput &dataReadyInput() noexcept;
 
 /**
  * @brief Get the LED output (status indicator).
  */
-ILedOutput& ledOutput() noexcept;
+ILedOutput &ledOutput() noexcept;
 
 } // namespace platform
 

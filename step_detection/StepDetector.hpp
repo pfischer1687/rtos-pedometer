@@ -37,9 +37,6 @@ struct StepEvent {
  */
 class StepDetector {
 public:
-  /**
-   * @brief Constructor.
-   */
   StepDetector() noexcept = default;
 
   /**
