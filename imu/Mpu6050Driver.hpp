@@ -1,10 +1,9 @@
 /**
  * @file imu/Mpu6050Driver.hpp
- * @brief MPU-6050 IMU driver
+ * @brief MPU-6050 IMU driver.
  * @details
- * This interface is currently accelerometer-focused, gyroscope samples
- * are not included for pedometer MVP, but may be added in the future for gait
- * analysis, etc.
+ * - This interface is currently accelerometer-focused for the pedometer MVP.
+ * - Gyroscope samples may be added in the future for gait analysis.
  */
 
 #ifndef IMU_MPU6050_DRIVER_HPP
@@ -22,9 +21,9 @@ namespace imu {
  * @struct ImuSample
  * @brief Raw IMU sample (device LSB units).
  * @details
- *  - Accelerometer outputs are signed 16-bit values from ACCEL_*OUT registers.
- *  - Scaling to physical units is intentionally left to higher layers.
- *  - Timestamp is captured at read time, not sample time.
+ * - Accelerometer outputs are signed 16-bit values from ACCEL_*OUT registers.
+ * - Scaling to physical units is left to higher layers.
+ * - Timestamp is captured at read time, not sample time.
  */
 struct ImuSample {
   std::array<int16_t, 3> accel{{0, 0, 0}}; // X, Y, Z
@@ -46,8 +45,8 @@ enum class AccelRange : uint8_t {
  * @enum DlpfConfig
  * @brief Digital Low-Pass Filter configuration (CONFIG.DLPF_CFG).
  * @details
- *  - Also controls gyro internal sampling rate (1 kHz vs 8 kHz).
- *  - Accelerometer ADC rate remains 1 kHz.
+ * - Also controls gyro internal sampling rate (1 kHz vs 8 kHz).
+ * - Accelerometer ADC rate remains 1 kHz.
  */
 enum class DlpfConfig : uint8_t {
   Off = 0, // ~260 Hz accel bandwidth, 0 ms delay
@@ -63,8 +62,8 @@ enum class DlpfConfig : uint8_t {
  * @enum OutputDataRate
  * @brief Output Data Rate for sensor registers / FIFO / DMP.
  * @details
- * Internally mapped to SMPLRT_DIV.
- * Effective accel ODR = min(1 kHz, gyro_rate / (1 + divider)).
+ * - Internally mapped to SMPLRT_DIV.
+ * - Effective accel ODR = min(1 kHz, gyro_rate / (1 + divider)).
  */
 enum class OutputDataRate : uint16_t {
   Hz1000 = 1000,
@@ -85,6 +84,24 @@ struct ImuConfig {
 };
 
 /**
+ * @enum DriverState
+ * @brief Explicit driver state for the MPU-6050 state machine.
+ * @details
+ * Transitions:
+ * - Uninitialized -> Initialized: init()
+ * - Initialized -> Configured: configure()
+ * - Configured -> Sampling: startSampling()
+ * - Sampling -> Configured: stopSampling()
+ * - Any -> Uninitialized: reset()
+ */
+enum class DriverState : uint8_t {
+  Uninitialized,
+  Initialized,
+  Configured,
+  Sampling,
+};
+
+/**
  * @class Mpu6050Driver
  * @brief MPU-6050 driver.
  */
@@ -101,6 +118,9 @@ public:
   /**
    * @brief Initialize device and bring it out of reset.
    * @return Result.
+   * @details
+   * - Must succeed before configure() may be called.
+   * - Transitions state from Uninitialized to Initialized on success.
    */
   platform::Result init() noexcept;
 
@@ -109,29 +129,75 @@ public:
    * @param config Configuration.
    * @return Result.
    * @details
-   * Safe to call only after init().
+   * - Must be called only after init() has succeeded.
+   * - Transitions state from Initialized to Configured on success.
    */
   platform::Result configure(const ImuConfig &config) noexcept;
+
+  /**
+   * @brief Reset driver to Uninitialized state.
+   * @return Result.
+   * @details
+   * - init() must be called again before configure() and startSampling() may be
+   * called.
+   */
+  platform::Result reset() noexcept;
+
+  /**
+   * @brief Start sampling.
+   * @return Result.
+   * @details
+   * - Must be called only after configure() has succeeded.
+   * - Transitions state from Configured to Sampling.
+   */
+  platform::Result startSampling() noexcept;
+
+  /**
+   * @brief Stop sampling and return to Configured state.
+   * @return Result.
+   * @details
+   * - Transitions state from Sampling to Configured.
+   */
+  platform::Result stopSampling() noexcept;
+
+  /**
+   * @brief Notify the driver that data-ready was asserted.
+   * @details
+   * - ISR-safe: no blocking or allocation.
+   */
+  void notifyDataReadyFromIsr() noexcept;
+
+  /**
+   * @brief Consume the data-ready signal.
+   * @return True if data-ready had been set since last consume; false
+   * otherwise.
+   */
+  bool consumeDataReady() noexcept;
 
   /**
    * @brief Read one accelerometer sample.
    * @param sample Sample to read into.
    * @return Result.
    * @details
-   * Reads ACCEL_XOUT_H .. ACCEL_ZOUT_L in a single burst.
+   * - Only valid when state is Sampling.
    */
   platform::Result readSample(ImuSample &sample) noexcept;
 
   /**
-   * @brief Check if the driver is initialized.
-   * @return True if initialized, false otherwise.
+   * @brief Return current driver state.
+   * @return DriverState: Current state.
    */
-  bool isInitialized() const noexcept { return _initialized; }
+  DriverState getState() const noexcept { return _state; }
+
+  /**
+   * @brief Check if driver is initialized.
+   * @return bool.
+   */
+  bool isInitialized() const noexcept {
+    return _state != DriverState::Uninitialized;
+  }
 
 private:
-  static constexpr uint8_t DefaultI2cAddress = 0x68;
-  static constexpr uint8_t WhoAmIValue = 0x68;
-
   /**
    * @enum Register
    * @brief MPU-6050 register map (subset).
@@ -177,7 +243,8 @@ private:
 
   platform::II2CProvider &_i2c;
   platform::ITickSource &_tickSource;
-  bool _initialized{false};
+  DriverState _state{DriverState::Uninitialized};
+  volatile bool _dataReadyFlag{false};
 };
 
 } // namespace imu
