@@ -43,3 +43,5 @@
 # Mbed / CMake
 build/
 .cache/
+
+host_build/
