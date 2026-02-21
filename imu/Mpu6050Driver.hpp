@@ -13,6 +13,7 @@
 #include "platform/Platform.hpp"
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 
 namespace imu {
@@ -29,6 +30,25 @@ struct ImuSample {
   std::array<int16_t, 3> accel{{0, 0, 0}}; // X, Y, Z
   platform::TickUs timestampUs{0};
 };
+
+/**
+ * @brief Get sample buffer length.
+ * @return Sample buffer length.
+ * @details
+ * - According to MPU-6050 register map:
+ *   - 0x3B: ACCEL_XOUT_H
+ *   - 0x3C: ACCEL_XOUT_L
+ *   - ...
+ *   - 0x40: ACCEL_ZOUT_L
+ *   - 0x41: TEMP_OUT_H
+ *   - 0x42: TEMP_OUT_L
+ *   - 0x43: GYRO_XOUT_H
+ *   - ...
+ *   - 0x48: GYRO_ZOUT_L
+ * - For accel only, we need the first 6 bytes. To include the gyroscope we'd
+ * need 14.
+ */
+constexpr uint8_t SAMPLE_BUF_LEN = 6u;
 
 /**
  * @enum AccelRange
@@ -93,12 +113,14 @@ struct ImuConfig {
  * - Configured -> Sampling: startSampling()
  * - Sampling -> Configured: stopSampling()
  * - Any -> Uninitialized: reset()
+ * - Any -> Fault: enterFaultState()
  */
 enum class DriverState : uint8_t {
   Uninitialized,
   Initialized,
   Configured,
   Sampling,
+  Fault
 };
 
 /**
@@ -110,10 +132,11 @@ public:
   /**
    * @brief Constructor.
    * @param i2c I2C provider.
-   * @param tickSource Microsecond tick source.
+   * @param timer Timer.
+   * @param i2cAddr7Bit I2C address (7-bit).
    */
-  explicit Mpu6050Driver(platform::II2CProvider &i2c,
-                         platform::ITickSource &tickSource) noexcept;
+  explicit Mpu6050Driver(platform::II2CProvider &i2c, platform::ITimer &timer,
+                         uint8_t i2cAddr7Bit) noexcept;
 
   /**
    * @brief Initialize device and bring it out of reset.
@@ -161,9 +184,18 @@ public:
   platform::Result stopSampling() noexcept;
 
   /**
+   * @brief Enter fault state.
+   * @details
+   * - Transitions state from any to Fault.
+   */
+  void enterFaultState() noexcept;
+
+  /**
    * @brief Notify the driver that data-ready was asserted.
    * @details
    * - ISR-safe: no blocking or allocation.
+   * - Only valid when state is Sampling.
+   * - Sets data-ready flag and captures ISR timestamp for sample timestamp.
    */
   void notifyDataReadyFromIsr() noexcept;
 
@@ -180,6 +212,8 @@ public:
    * @return Result.
    * @details
    * - Only valid when state is Sampling.
+   * - Returns DataNotReady if data is not ready.
+   * - Captures ISR timestamp for sample timestamp.
    */
   platform::Result readSample(ImuSample &sample) noexcept;
 
@@ -190,12 +224,46 @@ public:
   DriverState getState() const noexcept { return _state; }
 
   /**
-   * @brief Check if driver is initialized.
+   * @brief Check if driver is ready for initialization.
    * @return bool.
    */
-  bool isInitialized() const noexcept {
-    return _state != DriverState::Uninitialized;
+  bool isReadyForInit() const noexcept {
+    return _state == DriverState::Uninitialized;
   }
+
+  /**
+   * @brief Check if driver is ready for configuration.
+   * @return bool.
+   */
+  bool isReadyForConfig() const noexcept {
+    return _state == DriverState::Initialized;
+  }
+
+  /**
+   * @brief Check if driver is ready for sampling.
+   * @return bool.
+   */
+  bool isReadyForSampling() const noexcept {
+    return _state == DriverState::Configured;
+  }
+
+  /**
+   * @brief Check if driver is sampling.
+   * @return bool.
+   */
+  bool isSampling() const noexcept { return _state == DriverState::Sampling; }
+
+  /**
+   * @brief Check if driver is in fault state.
+   * @return bool.
+   */
+  bool isFault() const noexcept { return _state == DriverState::Fault; }
+
+  /**
+   * @brief Perform a health check of the MPU-6050.
+   * @return Result
+   */
+  platform::Result healthCheck() noexcept;
 
 private:
   /**
@@ -203,10 +271,13 @@ private:
    * @brief MPU-6050 register map (subset).
    */
   enum class Register : uint8_t {
+    INT_ENABLE = 0x38,
+    INT_STATUS = 0x3A,
     SMPLRT_DIV = 0x19,
     CONFIG = 0x1A,
     ACCEL_CONFIG = 0x1C,
     PWR_MGMT_1 = 0x6B,
+    PWR_MGMT_2 = 0x6C,
     ACCEL_XOUT_H = 0x3B,
     WHO_AM_I = 0x75,
   };
@@ -215,36 +286,59 @@ private:
    * @brief Write a single register.
    * @param reg Register address
    * @param value Register value
-   * @param timeoutMs Timeout in milliseconds.
    * @return Result
    */
-  platform::Result writeReg(Register reg, uint8_t value,
-                            uint32_t timeoutMs) noexcept;
+  platform::Result writeReg(Register reg, uint8_t value) noexcept;
 
   /**
    * @brief Read multiple registers.
    * @param start Register address
    * @param buf Buffer to store the registers
    * @param len Number of registers to read
-   * @param timeoutMs Timeout in milliseconds.
    * @return Result
    */
-  platform::Result readRegs(Register start, uint8_t *buf, size_t len,
-                            uint32_t timeoutMs) noexcept;
+  platform::Result readRegs(Register start, uint8_t *buf, size_t len) noexcept;
 
   /**
-   * @brief Convert OutputDataRate to sample rate divider.
-   * @param odr OutputDataRate
-   * @return Sample rate divider
-   * @details
-   *  SampleRate = gyro_rate / (1 + SMPLRT_DIV)
+   * @brief Write a single register and verify the value.
+   * @param reg Register address
+   * @param value Register value
+   * @return Result
    */
-  static uint8_t odrToDivider(OutputDataRate odr) noexcept;
+  platform::Result writeRegVerified(Register reg, uint8_t value) noexcept;
+
+  /**
+   * @brief Read multiple registers with retry.
+   * @param start Register address
+   * @param buf Buffer to store the registers
+   * @param len Number of registers to read
+   * @return Result
+   */
+  platform::Result readRegsWithRetry(Register start, uint8_t *buf,
+                                     size_t len) noexcept;
+
+  /**
+   * @brief Helper function to set the driver to fault state and return the
+   * result.
+   * @param r Result
+   * @return Result
+   */
+  platform::Result fault(platform::Result r) noexcept;
+
+  /**
+   * @brief Current driver state.
+   * @details
+   * - Main context owns state transitions.
+   * - ISR reads _state and does not modify it.
+   * - Assuming single-core Cortex-M7 (STM32 Nucleo F767ZI).
+   */
+  DriverState _state{DriverState::Uninitialized};
 
   platform::II2CProvider &_i2c;
-  platform::ITickSource &_tickSource;
-  DriverState _state{DriverState::Uninitialized};
-  volatile bool _dataReadyFlag{false};
+  platform::ITimer &_timer;
+  uint8_t _i2cAddr7Bit{0};
+  std::atomic<bool> _dataReadyFlag{false};
+  std::atomic<platform::TickUs> _lastDataReadyTimestampUs{0};
 };
 
 } // namespace imu

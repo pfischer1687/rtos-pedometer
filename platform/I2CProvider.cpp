@@ -58,10 +58,12 @@ public:
       return Result::InvalidArgument;
     }
 
+    bool isRepeatedStart = (txLen > 0 && rxLen > 0);
+
     if (txLen > 0) {
-      mbed::I2C::Result r = m_i2c.write(getWriteAddr8Bit(addr7bit),
-                                        reinterpret_cast<const char *>(txData),
-                                        static_cast<int>(txLen), true);
+      mbed::I2C::Result r = m_i2c.write(
+          getWriteAddr8Bit(addr7bit), reinterpret_cast<const char *>(txData),
+          static_cast<int>(txLen), isRepeatedStart);
 
       if (r != mbed::I2C::ACK) {
         return fromMbedResult(r);

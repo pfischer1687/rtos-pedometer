@@ -26,6 +26,7 @@ enum class Result : uint8_t {
   NotInitialized = 5,
   HardwareFault = 6,
   InvalidArgument = 7,
+  DataNotReady = 8,
 };
 
 /**
@@ -52,21 +53,30 @@ constexpr TickUs elapsed(TickUs start, TickUs end) noexcept {
 }
 
 /**
- * @interface ITickSource
- * @brief Abstract microsecond tick source.
- * @details
- * - Implemented by board-specific HAL layer.
- * - Injectable for unit testing.
+ * @interface ITimer
+ * @brief Abstract timer interface.
  */
-class ITickSource {
+class ITimer {
 public:
-  virtual ~ITickSource() = default;
+  virtual ~ITimer() = default;
 
   /**
    * @brief Get current microsecond tick.
    * @return Current microsecond tick.
    */
   virtual TickUs nowUs() const noexcept = 0;
+
+  /**
+   * @brief Delay in microseconds.
+   * @param us Microseconds to delay.
+   */
+  virtual void delayUs(uint32_t us) noexcept = 0;
+
+  /**
+   * @brief Delay in milliseconds.
+   * @param ms Milliseconds to delay.
+   */
+  virtual void delayMs(uint32_t ms) noexcept = 0;
 };
 
 /**
@@ -97,37 +107,16 @@ public:
 };
 
 /**
- * @brief Get the tick source.
- * @return Tick source.
+ * @brief Get the timer.
+ * @return Timer.
  */
-ITickSource &tickSource() noexcept;
+ITimer &timer() noexcept;
 
 /**
  * @brief Get the watchdog.
  * @return Watchdog.
  */
 IWatchdog &watchdog() noexcept;
-
-/**
- * @brief Platform initialization.
- * @return Result.
- * @details
- * - Must be called exactly once before using any other platform interfaces.
- */
-Result init() noexcept;
-
-/**
- * @brief Busy-wait delay in microseconds. Deterministic; not for long delays.
- * @param us Microseconds to wait.
- */
-void delayUs(uint32_t us) noexcept;
-
-/**
- * @brief Busy-wait delay in milliseconds. Use sparingly; prefer thread sleep
- * for long waits.
- * @param ms Milliseconds to wait.
- */
-void delayMs(uint32_t ms) noexcept;
 
 } // namespace platform
 

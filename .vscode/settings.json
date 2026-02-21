@@ -31,11 +31,11 @@
         // - host_build for unit tests
         // - build/NUCLEO_F767ZI-Develop and ARM query-driver for STM32 target
 
-        // "--compile-commands-dir=build/NUCLEO_F767ZI-Develop",
-        "--compile-commands-dir=host_build",
+        "--compile-commands-dir=build/NUCLEO_F767ZI-Develop",
+        // "--compile-commands-dir=host_build",
         "--background-index",
         "--clang-tidy",
-        // "--query-driver=C:/arm-gcc/arm-none-eabi-gcc.bat"
+        "--query-driver=C:/arm-gcc/arm-none-eabi-gcc.bat"
     ],
     "yaml.schemas": {
         "file:///dev/null": "*.json"
