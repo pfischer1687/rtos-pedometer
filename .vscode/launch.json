@@ -7,7 +7,7 @@
 	    "name": "Debug rtos-pedometer NUCLEO_F767ZI Develop",
 	    "executable": "C:/Users/pfisc/github/rtos-pedometer/build/NUCLEO_F767ZI-Develop/rtos-pedometer.elf",
 	    "cwd": "${workspaceRoot}",
-	    "gdbPath": "C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.3 rel1/bin/arm-none-eabi-gdb.exe",
+	    "gdbPath": "C:/arm-gcc/bin/arm-none-eabi-gdb.exe",
 		"objdumpPath": "C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.3 rel1/bin/arm-none-eabi-objdump.exe",
 		"servertype": "external",
 		"gdbTarget": "127.0.0.1:23331",

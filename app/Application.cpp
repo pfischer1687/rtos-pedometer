@@ -9,10 +9,11 @@
 namespace app {
 
 [[noreturn]] void run() noexcept {
-  platform::init();
-  
+  auto &timer = platform::timer();
+
   while (true) {
-    platform::tickSource().nowUs();
+    platform::TickUs t = timer.nowUs();
+    (void)t;
   }
 }
 

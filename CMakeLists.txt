@@ -1,13 +1,8 @@
 cmake_minimum_required(VERSION 3.19)
 cmake_policy(VERSION 3.19...3.22)
 
-# Created this batch file for VS Code's clangd extension to use the compiler path without spaces.
-# ```C:\arm-gcc\arm-none-eabi-gcc.bat
-# @echo off
-# "C:\Program Files (x86)\Arm GNU Toolchain arm-none-eabi\14.3 rel1\bin\arm-none-eabi-gcc.exe" %*
-# ```
-set(CMAKE_C_COMPILER "C:/arm-gcc/arm-none-eabi-gcc.bat")
-set(CMAKE_CXX_COMPILER "C:/arm-gcc/arm-none-eabi-gcc.bat")
+set(CMAKE_C_COMPILER "C:/arm-gcc/bin/arm-none-eabi-gcc.exe")
+set(CMAKE_CXX_COMPILER "C:/arm-gcc/bin/arm-none-eabi-gcc.exe")
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(MBED_APP_JSON_PATH ${CMAKE_CURRENT_SOURCE_DIR}/mbed_app.json5)
