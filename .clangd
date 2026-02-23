@@ -1,3 +1,9 @@
 CompileFlags:
   CompilationDatabase: build/NUCLEO_F767ZI-Develop
   # CompilationDatabase: test/build
+
+---
+If:
+  PathMatch: ^platform/.*\.cpp$
+Diagnostics:
+  Suppress: unused-includes
