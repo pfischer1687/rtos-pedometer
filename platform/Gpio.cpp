@@ -23,6 +23,8 @@ constexpr PinName DATA_READY_PIN =
  */
 constexpr PinName LED_PIN = LED3;
 
+} // anonymous namespace
+
 /**
  * @class DataReadyInputImpl
  * @brief Data-ready input implementation.
@@ -68,21 +70,22 @@ private:
   mbed::DigitalOut m_led{LED_PIN};
 };
 
-DataReadyInputImpl g_dataReadyInput;
-LedOutputImpl g_ledOutput;
-
-} // anonymous namespace
-
 /**
  * @brief Get the data-ready input (MPU-6050 INT pin).
  * @return Data-ready input.
  */
-IDataReadyInput &dataReadyInput() noexcept { return g_dataReadyInput; }
+IDataReadyInput &dataReadyInput() noexcept {
+  static DataReadyInputImpl instance;
+  return instance;
+}
 
 /**
  * @brief Get the LED output (status indicator).
  * @return LED output.
  */
-ILedOutput &ledOutput() noexcept { return g_ledOutput; }
+ILedOutput &ledOutput() noexcept {
+  static LedOutputImpl instance;
+  return instance;
+}
 
 } // namespace platform

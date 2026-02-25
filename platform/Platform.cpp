@@ -25,6 +25,8 @@ constexpr uint32_t US_PER_MS = 1000u;
 constexpr uint32_t MAX_DELAY_US_INT32 =
     static_cast<uint32_t>(std::numeric_limits<int32_t>::max());
 
+} // anonymous namespace
+
 class TimerImpl final : public ITimer {
 public:
   TickUs nowUs() const noexcept override { return us_ticker_read(); }
@@ -36,10 +38,12 @@ public:
       us -= chunk;
     }
   }
-  
+
   void delayMs(uint32_t ms) noexcept override {
     while (ms > 0u) {
-      uint32_t chunk = (ms > MAX_DELAY_US_INT32 / US_PER_MS) ? MAX_DELAY_US_INT32 / US_PER_MS : ms;
+      uint32_t chunk = (ms > MAX_DELAY_US_INT32 / US_PER_MS)
+                           ? MAX_DELAY_US_INT32 / US_PER_MS
+                           : ms;
       delayUs(chunk * US_PER_MS);
       ms -= chunk;
     }
@@ -75,13 +79,14 @@ public:
   void kick() noexcept override { mbed::Watchdog::get_instance().kick(); }
 };
 
-TimerImpl g_timer;
-WatchdogImpl g_watchdog;
+ITimer &timer() noexcept {
+  static TimerImpl instance;
+  return instance;
+}
 
-} // anonymous namespace
-
-ITimer &timer() noexcept { return g_timer; }
-
-IWatchdog &watchdog() noexcept { return g_watchdog; }
+IWatchdog &watchdog() noexcept {
+  static WatchdogImpl instance;
+  return instance;
+}
 
 } // namespace platform

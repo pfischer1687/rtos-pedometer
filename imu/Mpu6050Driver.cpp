@@ -231,8 +231,8 @@ platform::Result Mpu6050Driver::readRegs(Register start, uint8_t *buf,
     return platform::Result::InvalidArgument;
   }
 
-  const uint8_t regAddr = static_cast<uint8_t>(start);
-  return _i2c.transfer(_i2cAddr7Bit, &regAddr, 1, buf, len);
+  const uint8_t tx[1] = {static_cast<uint8_t>(start)};
+  return _i2c.transfer(_i2cAddr7Bit, tx, 1, buf, len);
 }
 
 platform::Result Mpu6050Driver::readRegsWithRetry(Register start, uint8_t *buf,

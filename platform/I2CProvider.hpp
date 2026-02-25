@@ -38,10 +38,11 @@ public:
    * @param addr7bit Device address.
    * @param data Data to write.
    * @param len Length of data to write.
+   * @param isRepeatedStart Whether to use a repeated start.
    * @return Result.
    */
-  virtual Result write(uint8_t addr7bit, const uint8_t *data,
-                       size_t len) noexcept = 0;
+  virtual Result write(uint8_t addr7bit, const uint8_t *data, size_t len,
+                       bool isRepeatedStart = false) noexcept = 0;
 
   /**
    * @brief Read only.

@@ -27,6 +27,7 @@ enum class Result : uint8_t {
   HardwareFault = 6,
   InvalidArgument = 7,
   DataNotReady = 8,
+  NotSupported = 9,
 };
 
 /**

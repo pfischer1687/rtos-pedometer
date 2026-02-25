@@ -51,6 +51,7 @@ function(configure_clang_runtime target)
 endfunction()
 
 set(FIRMWARE_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/..)
+file(GLOB_RECURSE SUPPORT_MOCK_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/support/mocks/*.cpp")
 file(GLOB_RECURSE TEST_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp")
 set(HOST_SOURCES
   ${FIRMWARE_ROOT}/imu/Mpu6050Driver.cpp
@@ -78,12 +79,15 @@ enable_testing()
 
 add_executable(runUnitTests
   ${HOST_SOURCES}
+  ${SUPPORT_MOCK_SOURCES}
   ${CMAKE_CURRENT_SOURCE_DIR}/test_main.cpp
   ${TEST_FILES}
 )
 
 target_include_directories(runUnitTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/support
+  ${CMAKE_CURRENT_SOURCE_DIR}/support/mocks
   ${FIRMWARE_ROOT}
   ${FIRMWARE_ROOT}/app
   ${FIRMWARE_ROOT}/imu

@@ -20,8 +20,8 @@ constexpr uint32_t I2C_FREQ_HZ = 400'000u;
  * @param addr7bit 7-bit address.
  * @return 8-bit write address.
  */
-constexpr uint8_t getWriteAddr8Bit(uint8_t addr7bit) noexcept {
-  return static_cast<uint8_t>(addr7bit << 1);
+constexpr int getWriteAddr8Bit(uint8_t addr7bit) noexcept {
+  return static_cast<int>(addr7bit << 1u);
 }
 
 /**
@@ -29,8 +29,8 @@ constexpr uint8_t getWriteAddr8Bit(uint8_t addr7bit) noexcept {
  * @param addr7bit 7-bit address.
  * @return 8-bit read address.
  */
-constexpr uint8_t getReadAddr8Bit(uint8_t addr7bit) noexcept {
-  return static_cast<uint8_t>((addr7bit << 1) | 1u);
+constexpr int getReadAddr8Bit(uint8_t addr7bit) noexcept {
+  return static_cast<int>((addr7bit << 1u) | 0x01u);
 }
 
 /**
@@ -48,39 +48,14 @@ Result fromMbedResult(mbed::I2C::Result r) noexcept {
   return Result::Error;
 }
 
+} // anonymous namespace
+
 class I2CProviderImpl final : public II2CProvider {
 public:
   I2CProviderImpl() : m_i2c(I2C_SDA, I2C_SCL) { m_i2c.frequency(I2C_FREQ_HZ); }
 
-  Result transfer(uint8_t addr7bit, const uint8_t *txData, size_t txLen,
-                  uint8_t *rxData, size_t rxLen) noexcept override {
-    if ((txLen > 0 && txData == nullptr) || (rxLen > 0 && rxData == nullptr)) {
-      return Result::InvalidArgument;
-    }
-
-    bool isRepeatedStart = (txLen > 0 && rxLen > 0);
-
-    if (txLen > 0) {
-      mbed::I2C::Result r = m_i2c.write(
-          getWriteAddr8Bit(addr7bit), reinterpret_cast<const char *>(txData),
-          static_cast<int>(txLen), isRepeatedStart);
-
-      if (r != mbed::I2C::ACK) {
-        return fromMbedResult(r);
-      }
-    }
-
-    if (rxLen > 0) {
-      return fromMbedResult(m_i2c.read(getReadAddr8Bit(addr7bit),
-                                       reinterpret_cast<char *>(rxData),
-                                       static_cast<int>(rxLen)));
-    }
-
-    return Result::Ok;
-  }
-
-  Result write(uint8_t addr7bit, const uint8_t *data,
-               size_t len) noexcept override {
+  Result write(uint8_t addr7bit, const uint8_t *data, size_t len,
+               bool isRepeatedStart) noexcept override {
     if (len == 0u) {
       return Result::Ok;
     }
@@ -90,7 +65,7 @@ public:
 
     return fromMbedResult(m_i2c.write(getWriteAddr8Bit(addr7bit),
                                       reinterpret_cast<const char *>(data),
-                                      static_cast<int>(len)));
+                                      static_cast<int>(len), isRepeatedStart));
   }
 
   Result read(uint8_t addr7bit, uint8_t *data, size_t len) noexcept override {
@@ -106,14 +81,39 @@ public:
                                      static_cast<int>(len)));
   }
 
+  Result transfer(uint8_t addr7bit, const uint8_t *txData, size_t txLen,
+                  uint8_t *rxData, size_t rxLen) noexcept override {
+    if ((txLen > 0 && txData == nullptr) || (rxLen > 0 && rxData == nullptr)) {
+      return Result::InvalidArgument;
+    }
+
+    bool isRepeatedStart = (txLen > 0 && rxLen > 0);
+
+    if (txLen > 0) {
+      platform::Result writeResult =
+          write(addr7bit, txData, txLen, isRepeatedStart);
+      if (!platform::isOk(writeResult)) {
+        return writeResult;
+      }
+    }
+
+    if (rxLen > 0) {
+      platform::Result readResult = read(addr7bit, rxData, rxLen);
+      if (!platform::isOk(readResult)) {
+        return readResult;
+      }
+    }
+
+    return Result::Ok;
+  }
+
 private:
   mbed::I2C m_i2c;
 };
 
-I2CProviderImpl g_i2c;
-
-} // anonymous namespace
-
-II2CProvider &i2c() noexcept { return g_i2c; }
+II2CProvider &i2c() noexcept {
+  static I2CProviderImpl instance;
+  return instance;
+}
 
 } // namespace platform
