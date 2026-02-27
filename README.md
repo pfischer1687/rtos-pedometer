@@ -39,6 +39,25 @@ git submodule add --depth 1 https://github.com/mbed-ce/mbed-os.git mbed-os
   - `STATUS`: query current session metrics
   - `RESET`: reset step count and session
 
+## Debugging Unit Tests on Host Device
+
+Unit tests are built and debugged on the host using CMake and LLDB.
+
+From the repo root run:
+
+```powershell
+.\scripts\host-debug.ps1
+```
+
+This will:
+
+- Clean `test/build`
+- Configure using the `host-debug` CMake preset
+- Build the Debug configuration
+- Switch VS Code to the host debug launch configuration
+
+Then set your breeakpoints and press F5.
+
 ## References
 
 - [Mbed CE Documentation](https://mbed-ce.dev)
