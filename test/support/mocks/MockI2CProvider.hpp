@@ -9,7 +9,9 @@
 #include "platform/I2CProvider.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -52,7 +54,7 @@ public:
    * @param len Length of response bytes.
    */
   void setRegisterResponseBytes(uint8_t registerAddr, const uint8_t *bytes,
-                           size_t len);
+                                size_t len);
 
   /**
    * @brief Set single-byte response for a register.
@@ -85,11 +87,20 @@ public:
   void setNextReadResult(platform::Result r) noexcept { nextReadResult_ = r; }
 
   /**
-   * @brief Set next transfer result.
+   * @brief Sets a single result for the next transfer.
    * @param r Result.
    */
   void setNextTransferResult(platform::Result r) noexcept {
-    nextTransferResult_ = r;
+    nextTransferResults_.clear();
+    nextTransferResults_.push_back(r);
+  }
+
+  /**
+   * @brief Sets a following series of transfer results.
+   * @param results std::vector<platform::Result>.
+   */
+  void setNextTransferResults(std::vector<platform::Result> results) noexcept {
+    nextTransferResults_.assign(results.begin(), results.end());
   }
 
   /**
@@ -152,11 +163,17 @@ public:
   lastWriteToRegister(uint8_t addr7bit, uint8_t reg,
                       std::optional<uint8_t> value = {}) const noexcept;
 
+  /**
+   * @brief Get the register responses map as a string for debugging.
+   * @return Register responses map as a string.
+   */
+  std::string registerResponsesAsString() const;
+
 private:
   std::unordered_map<uint8_t, std::vector<uint8_t>> registerResponses_;
   platform::Result nextWriteResult_{platform::Result::Ok};
   platform::Result nextReadResult_{platform::Result::Ok};
-  platform::Result nextTransferResult_{platform::Result::Ok};
+  std::deque<platform::Result> nextTransferResults_;
   size_t transferCount_{0};
   size_t writeCount_{0};
   size_t readCount_{0};

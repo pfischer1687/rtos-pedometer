@@ -87,9 +87,12 @@ public:
       return Result::InvalidArgument;
     }
 
-    bool isRepeatedStart = (txLen > 0 && rxLen > 0);
+    // Transfer operations should be atomic for RTOS thread safety.
+    ScopedLock<Mutex> lock(m_mutex);
 
     if (txLen > 0) {
+      const bool isRepeatedStart = (txLen > 0 && rxLen > 0);
+
       platform::Result writeResult =
           write(addr7bit, txData, txLen, isRepeatedStart);
       if (!platform::isOk(writeResult)) {
@@ -109,6 +112,7 @@ public:
 
 private:
   mbed::I2C m_i2c;
+  rtos::Mutex m_mutex;
 };
 
 II2CProvider &i2c() noexcept {

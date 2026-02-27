@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Unit Tests (Host)",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/test/build/Debug/runUnitTests.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    }
+  ]
+}

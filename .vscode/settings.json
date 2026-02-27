@@ -1,37 +1,37 @@
 {
-    "cmake.buildDirectory": "${workspaceFolder}/build/${variant:board}-${variant:buildType}",
-    "cmake.generator": "Ninja",
-    "cmake.configureOnOpen": false,
-    "cmake.options.statusBarVisibility": "compact",
-    "cmake.options.advanced": {
-        "build": {
-            "statusBarVisibility": "visible",
-            "inheritDefault": "hidden"
-        },
-        "launch": {
-            "statusBarVisibility": "visible",
-            "inheritDefault": "hidden"
-        },
-        "debug": {
-            "statusBarVisibility": "visible",
-            "inheritDefault": "hidden"
-        },
-        "cpack": {
-            "statusBarVisibility": "hidden",
-            "inheritDefault": "hidden"
-        },
-        "workflow": {
-            "statusBarVisibility": "hidden",
-            "inheritDefault": "hidden"
-        }
+  "cmake.buildDirectory": "${workspaceFolder}/build/${variant:board}-${variant:buildType}",
+  "cmake.generator": "Ninja",
+  "cmake.configureOnOpen": false,
+  "cmake.options.statusBarVisibility": "compact",
+  "cmake.options.advanced": {
+    "build": {
+      "statusBarVisibility": "visible",
+      "inheritDefault": "hidden"
     },
-    "clangd.arguments": [
-        "--background-index",
-        "--clang-tidy",
-        "--query-driver=C:/arm-gcc/bin/arm-none-eabi-gcc.exe"
-    ],
-    "C_Cpp.intelliSenseEngine": "disabled",
-    "yaml.schemas": {
-        "file:///dev/null": "*.json"
+    "launch": {
+      "statusBarVisibility": "visible",
+      "inheritDefault": "hidden"
+    },
+    "debug": {
+      "statusBarVisibility": "visible",
+      "inheritDefault": "hidden"
+    },
+    "cpack": {
+      "statusBarVisibility": "hidden",
+      "inheritDefault": "hidden"
+    },
+    "workflow": {
+      "statusBarVisibility": "hidden",
+      "inheritDefault": "hidden"
     }
+  },
+  "clangd.arguments": [
+    "--background-index",
+    "--clang-tidy",
+    "--query-driver=C:/arm-gcc/bin/arm-none-eabi-gcc.exe"
+  ],
+  "C_Cpp.intelliSenseEngine": "disabled",
+  "yaml.schemas": {
+    "file:///dev/null": "*.json"
+  }
 }

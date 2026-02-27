@@ -6,13 +6,23 @@
 #include "MockI2CProvider.hpp"
 #include <algorithm>
 #include <cstring>
+#include <iomanip>
+#include <sstream>
 
 namespace test_support {
+
+namespace {
+
+constexpr uint8_t PWR_MGMT_1 = 0x6Bu;
+constexpr uint8_t DEVICE_RESET_BIT = 0x80u;
+constexpr uint8_t PWR_MGMT_1_DEFAULT = 0x40u;
+
+} // anonymous namespace
 
 void MockI2CProvider::clearSimulatedFailures() noexcept {
   nextWriteResult_ = platform::Result::Ok;
   nextReadResult_ = platform::Result::Ok;
-  nextTransferResult_ = platform::Result::Ok;
+  nextTransferResults_.clear();
 }
 
 void MockI2CProvider::resetCounters() noexcept {
@@ -27,8 +37,11 @@ platform::Result MockI2CProvider::write(uint8_t addr7bit, const uint8_t *data,
   (void)isRepeatedStart;
   ++writeCount_;
 
-  if (nextWriteResult_ != platform::Result::Ok)
-    return nextWriteResult_;
+  if (nextWriteResult_ != platform::Result::Ok) {
+    platform::Result r = nextWriteResult_;
+    nextWriteResult_ = platform::Result::Ok;
+    return r;
+  }
   if (len == 0u) {
     return platform::Result::Ok;
   }
@@ -41,7 +54,13 @@ platform::Result MockI2CProvider::write(uint8_t addr7bit, const uint8_t *data,
 
   uint8_t reg = data[0];
   std::vector<uint8_t> payload(data + 1, data + len);
-  registerResponses_[reg] = payload;
+
+  if (reg == PWR_MGMT_1 && payload.size() == 1u &&
+      payload[0] == DEVICE_RESET_BIT) {
+    registerResponses_[reg] = {PWR_MGMT_1_DEFAULT};
+  } else {
+    registerResponses_[reg] = payload;
+  }
   writeLog_.push_back({addr7bit, reg, payload});
 
   return platform::Result::Ok;
@@ -62,10 +81,13 @@ platform::Result MockI2CProvider::transfer(uint8_t addr7bit,
   (void)addr7bit;
   ++transferCount_;
 
-  if (nextTransferResult_ != platform::Result::Ok) {
-    platform::Result r = nextTransferResult_;
-    nextTransferResult_ = platform::Result::Ok;
-    return r;
+  if (!nextTransferResults_.empty()) {
+    platform::Result r = nextTransferResults_.front();
+    nextTransferResults_.pop_front();
+
+    if (!platform::isOk(r)) {
+      return r;
+    }
   }
 
   if ((txLen > 0 && txData == nullptr) || (rxLen > 0 && rxData == nullptr)) {
@@ -133,6 +155,21 @@ const RecordedWrite *MockI2CProvider::lastWriteToRegister(
     return &(*it);
   }
   return nullptr;
+}
+
+std::string MockI2CProvider::registerResponsesAsString() const {
+  std::ostringstream oss;
+  oss << "registerResponses_ contents:\n";
+  for (const auto &[reg, bytes] : registerResponses_) {
+    oss << "  0x" << std::hex << std::setw(2) << std::setfill('0')
+        << static_cast<int>(reg) << " => [";
+    for (auto b : bytes) {
+      oss << std::hex << std::setw(2) << std::setfill('0')
+          << static_cast<int>(b) << " ";
+    }
+    oss << "]\n";
+  }
+  return oss.str();
 }
 
 } // namespace test_support

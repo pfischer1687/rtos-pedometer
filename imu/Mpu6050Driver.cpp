@@ -62,7 +62,7 @@ constexpr uint8_t DATA_RDY_INT_BIT = 0x01u;
 /**
  * @brief Maximum number of attempts to read registers.
  */
-constexpr uint8_t MAX_READ_RETRY_ATTEMPTS = 3u;
+constexpr uint8_t MAX_READ_RETRY_ATTEMPTS = 2u;
 
 /**
  * @brief Backoff delay in microseconds between read retry attempts.
@@ -239,7 +239,7 @@ platform::Result Mpu6050Driver::readRegsWithRetry(Register start, uint8_t *buf,
                                                   size_t len) noexcept {
   platform::Result lastReadResult = platform::Result::HardwareFault;
 
-  for (uint8_t i = 0; i < MAX_READ_RETRY_ATTEMPTS; ++i) {
+  for (uint8_t i = 0; i <= MAX_READ_RETRY_ATTEMPTS; ++i) {
     lastReadResult = readRegs(start, buf, len);
     if (platform::isOk(lastReadResult)) {
       return lastReadResult;
@@ -285,10 +285,6 @@ platform::Result Mpu6050Driver::fault(platform::Result r) noexcept {
 }
 
 platform::Result Mpu6050Driver::healthCheck() noexcept {
-  if (_state == DriverState::Uninitialized) {
-    return platform::Result::InvalidState;
-  }
-
   uint8_t whoAmI = 0;
   const platform::Result whoAmIResult =
       readRegs(Register::WHO_AM_I, &whoAmI, 1);
@@ -300,21 +296,45 @@ platform::Result Mpu6050Driver::healthCheck() noexcept {
   return platform::Result::Ok;
 }
 
-platform::Result Mpu6050Driver::init() noexcept {
-  if (_state != DriverState::Uninitialized) {
-    return platform::Result::InvalidState;
-  }
+platform::Result Mpu6050Driver::reset() noexcept {
+  _dataReadyFlag.store(false, std::memory_order_release);
+  _lastDataReadyTimestampUs.store(0u, std::memory_order_release);
 
-  const platform::Result resetResult =
+  const platform::Result disableIntResult =
+      writeReg(Register::INT_ENABLE, 0x00u);
+  if (!platform::isOk(disableIntResult))
+    return fault(disableIntResult);
+
+  const platform::Result resetPwrMgmt1Result =
       writeReg(Register::PWR_MGMT_1, DEVICE_RESET_BIT);
-  if (!platform::isOk(resetResult))
-    return fault(resetResult);
+  if (!platform::isOk(resetPwrMgmt1Result))
+    return fault(resetPwrMgmt1Result);
 
   _timer.delayMs(DEVICE_RESET_DELAY_MS);
 
   const platform::Result healthCheckResult = healthCheck();
   if (!platform::isOk(healthCheckResult))
     return fault(healthCheckResult);
+
+  uint8_t pwrMgmt1 = 0;
+  const platform::Result checkFullResetResult =
+      readRegs(Register::PWR_MGMT_1, &pwrMgmt1, 1);
+  if (!platform::isOk(checkFullResetResult) ||
+      pwrMgmt1 != PWR_MGMT_1_DEFAULT_VALUE)
+    return fault(platform::Result::HardwareFault);
+
+  _state = DriverState::Uninitialized;
+  return platform::Result::Ok;
+}
+
+platform::Result Mpu6050Driver::init() noexcept {
+  if (_state != DriverState::Uninitialized) {
+    return platform::Result::InvalidState;
+  }
+
+  const platform::Result resetResult = reset();
+  if (!platform::isOk(resetResult))
+    return fault(resetResult);
 
   const platform::Result wakeResult =
       writeRegVerified(Register::PWR_MGMT_1, CLKSEL_PLL_XGYRO);
@@ -357,37 +377,6 @@ platform::Result Mpu6050Driver::configure(const ImuConfig &config) noexcept {
     return fault(disableGyroResult);
 
   _state = DriverState::Configured;
-  return platform::Result::Ok;
-}
-
-platform::Result Mpu6050Driver::reset() noexcept {
-  _dataReadyFlag.store(false, std::memory_order_release);
-  _lastDataReadyTimestampUs.store(0u, std::memory_order_release);
-
-  const platform::Result disableIntResult =
-      writeReg(Register::INT_ENABLE, 0x00u);
-  if (!platform::isOk(disableIntResult))
-    return fault(disableIntResult);
-
-  const platform::Result resetPwrMgmt1Result =
-      writeReg(Register::PWR_MGMT_1, DEVICE_RESET_BIT);
-  if (!platform::isOk(resetPwrMgmt1Result))
-    return fault(resetPwrMgmt1Result);
-
-  _timer.delayMs(DEVICE_RESET_DELAY_MS);
-
-  const platform::Result healthCheckResult = healthCheck();
-  if (!platform::isOk(healthCheckResult))
-    return fault(healthCheckResult);
-
-  uint8_t pwrMgmt1 = 0;
-  const platform::Result checkFullResetResult =
-      readRegs(Register::PWR_MGMT_1, &pwrMgmt1, 1);
-  if (!platform::isOk(checkFullResetResult) ||
-      pwrMgmt1 != PWR_MGMT_1_DEFAULT_VALUE)
-    return fault(platform::Result::HardwareFault);
-
-  _state = DriverState::Uninitialized;
   return platform::Result::Ok;
 }
 
