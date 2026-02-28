@@ -46,3 +46,4 @@ build/
 
 host_build/
 .logs/
+.coverage/

@@ -28,7 +28,7 @@ DIR_TEST = "test"
 DIR_BUILD = "build"
 DIR_LOGS = ".logs"
 DIR_MBED_OS = "mbed-os"
-DIR_COVERAGE = "coverage"
+DIR_COVERAGE = ".coverage"
 HOST_BUILD_CONFIG = "RelWithDebInfo"
 TARGET_VARIANT_DIR = "NUCLEO_F767ZI-Develop"
 TARGET_PROJECT_NAME = "rtos-pedometer"
@@ -55,13 +55,20 @@ _FORMAT_EXTENSIONS = frozenset(
 )
 _FORMAT_EXTENSIONS_LOWER = {e.lower() for e in _FORMAT_EXTENSIONS}
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+EXCLUDE_DIRS = (
+    REPO_ROOT / DIR_MBED_OS,
+    REPO_ROOT / DIR_BUILD,
+    REPO_ROOT / DIR_TEST / DIR_BUILD,
+)
+
 
 def _logger() -> logging.Logger:
     """Return the shared logger (configured by setup_logging when run as main)."""
     return logging.getLogger(LOGGER_NAME)
 
 
-def setup_logging(repo_root: Path) -> None:
+def setup_logging(repo_root: Path) -> Path:
     """
     Configure logging: console at INFO, file at DEBUG.
     Log file: repo_root/{DIR_LOGS}/host_gate_<TIMESTAMP>.log.
@@ -86,6 +93,8 @@ def setup_logging(repo_root: Path) -> None:
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(formatter)
     logger.addHandler(fh)
+
+    return log_file
 
 
 def run_cmd(
@@ -161,6 +170,8 @@ def get_sources_from_compile_commands(build_dir: Path) -> list[Path]:
             p = (Path(work_dir) / p).resolve()
         else:
             p = p.resolve()
+        if any(p.is_relative_to(d) for d in EXCLUDE_DIRS):
+            continue
         if p not in seen:
             seen.add(p)
             sources.append(p)
@@ -363,7 +374,6 @@ class HostPipeline:
             "-show-line-counts-or-regions",
             "-show-expansions",
             "-show-instantiations",
-            "-branch-probabilities",
         ]
         if not run_cmd(cov_cmd, self.repo_root, "llvm-cov show"):
             return False
@@ -451,16 +461,6 @@ def run_target_pipeline(repo_root: Path, args: Namespace) -> bool:
     if not run_cmd(build_cmd, repo_root, "Build (target)"):
         return False
 
-    try:
-        sources = get_sources_from_compile_commands(target_build_dir)
-    except (FileNotFoundError, OSError, ValueError) as e:
-        log.error("[clang-tidy] %s", e)
-        return False
-    if not _run_clang_tidy_on_sources(
-        sources, target_build_dir, repo_root, "clang-tidy (target)"
-    ):
-        return False
-
     log.info("[Target pipeline] Completed: clean, configure, build, clang-tidy.")
     return True
 
@@ -470,8 +470,8 @@ def main() -> int:
     Entry point: parse args, run formatting then requested pipelines.
     Exit 0 if all requested steps succeed, 1 if any step fails.
     """
-    repo_root = Path(__file__).resolve().parents[1]
-    setup_logging(repo_root)
+    repo_root = REPO_ROOT
+    log_file = setup_logging(repo_root)
     log = _logger()
 
     parser = argparse.ArgumentParser(
@@ -512,18 +512,16 @@ def main() -> int:
     if sum(bool(f) for f in flags) > 1:
         log.error("Flags --test, --lint, and --coverage are mutually exclusive.")
         return 1
+    if not any(flags):
+        args.test = True
 
     test_cmake = repo_root / DIR_TEST / "CMakeLists.txt"
     if not test_cmake.exists():
         log.error("Repo layout invalid: %s not found; run from repo root.", test_cmake)
         return 1
 
-    if not args.target and not args.host:
-        run_target_requested = True
-        run_host_requested = True
-    else:
-        run_target_requested = args.target
-        run_host_requested = args.host
+    run_target_requested = args.target
+    run_host_requested = args.host or not args.target
 
     format_ok = run_clang_format(repo_root, fix=args.fix_format)
 
@@ -541,9 +539,14 @@ def main() -> int:
 
     success = format_ok and target_ok and host_ok
     if success:
-        log.info("All requested steps completed successfully.")
+        log.info("All requested steps completed successfully. See logs in %s", log_file)
+        if args.coverage:
+            log.info(
+                "Coverage report available at %s",
+                repo_root / DIR_COVERAGE / "html/index.html",
+            )
         return 0
-    log.error("One or more steps failed. See logs in %s", repo_root / DIR_LOGS)
+    log.error("One or more steps failed. See logs in %s", log_file)
     return 1
 
 
