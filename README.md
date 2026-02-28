@@ -58,6 +58,23 @@ This will:
 
 Then set your breeakpoints and press F5.
 
+## Host-quality gate (CI / local checks)
+
+From the repo root, use Python 3.14 and uv to run the full gate (build, test, lint, coverage) or individual steps:
+
+```bash
+uv venv --python 3.14
+uv pip install -r requirements.txt
+uv run tools/run_host_checks.py [--test/-t] [--lint/-l] [--coverage/-c]
+```
+
+- **No flags**: full gate (clean `test/build`, configure with host-check preset, build, run unit tests, clang-format check, clang-tidy, lcov coverage).
+- **`-t` / `--test`**: run unit tests only (configures and builds with host-check if `test/build` is missing).
+- **`-l` / `--lint`**: run clang-format and clang-tidy on app sources only (no build).
+- **`-c` / `--coverage`**: generate coverage report via lcov (assumes tests were run with coverage enabled).
+
+Flags can be combined (e.g. `-t -l`).
+
 ## References
 
 - [Mbed CE Documentation](https://mbed-ce.dev)

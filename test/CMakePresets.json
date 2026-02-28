@@ -6,9 +6,14 @@
       "displayName": "Host Debug",
       "generator": "Ninja Multi-Config",
       "binaryDir": "${sourceDir}/build",
-      "cacheVariables": {
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
-      }
+      "cacheVariables": { "CMAKE_EXPORT_COMPILE_COMMANDS": "ON" }
+    },
+    {
+      "name": "host-check",
+      "displayName": "Host Check",
+      "generator": "Ninja Multi-Config",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": { "CMAKE_EXPORT_COMPILE_COMMANDS": "ON" }
     }
   ],
   "buildPresets": [
@@ -16,6 +21,11 @@
       "name": "host-debug",
       "configurePreset": "host-debug",
       "configuration": "Debug"
+    },
+    {
+      "name": "host-check",
+      "configurePreset": "host-check",
+      "configuration": "RelWithDebInfo"
     }
   ]
 }

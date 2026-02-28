@@ -45,3 +45,4 @@ build/
 .cache/
 
 host_build/
+.logs/
