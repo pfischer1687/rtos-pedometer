@@ -17,7 +17,7 @@ namespace app {
  * Initialize platform and modules, create threads, start scheduler. Does not
  * return (runs until power off or reset).
  */
- [[noreturn]] void run() noexcept;
+[[noreturn]] void run() noexcept;
 
 } // namespace app
 
