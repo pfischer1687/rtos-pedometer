@@ -18,6 +18,13 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+option(TEST_ENTRY "Use test entry (TestEntry.cpp) instead of production (ProductionEntry.cpp)" OFF)
+if(TEST_ENTRY)
+  set(ENTRY_SOURCE entry/TestEntry.cpp)
+else()
+  set(ENTRY_SOURCE entry/ProductionEntry.cpp)
+endif()
+
 set(APP_SOURCES
     main.cpp
     app/Application.cpp
@@ -31,11 +38,12 @@ set(APP_SOURCES
     usb/UsbInterface.cpp
     led/RecordingLed.cpp
 )
-add_executable(${PROJECT_NAME} ${APP_SOURCES})
+add_executable(${PROJECT_NAME} ${APP_SOURCES} ${ENTRY_SOURCE})
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/app
+    ${CMAKE_CURRENT_SOURCE_DIR}/entry
     ${CMAKE_CURRENT_SOURCE_DIR}/platform
     ${CMAKE_CURRENT_SOURCE_DIR}/imu
     ${CMAKE_CURRENT_SOURCE_DIR}/signal_processing

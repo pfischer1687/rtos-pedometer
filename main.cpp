@@ -7,13 +7,6 @@
  * Does not return.
  */
 
-#include "app/Application.hpp"
-#include "mbed.h"
+#include "entry/FirmwareEntry.hpp"
 
-[[noreturn]] int main() {
-  app::run();
-
-  while (true) {
-    __NOP();
-  }
-}
+[[noreturn]] int main() { entry::firmware_entry(); }
