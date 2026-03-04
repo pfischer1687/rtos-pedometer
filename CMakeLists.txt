@@ -36,6 +36,7 @@ set(APP_SOURCES
     step_detection/StepDetector.cpp
     session/SessionManager.cpp
     usb/UsbInterface.cpp
+    usb/UsbTransport.cpp
     led/RecordingLed.cpp
 )
 add_executable(${PROJECT_NAME} ${APP_SOURCES} ${ENTRY_SOURCE})
