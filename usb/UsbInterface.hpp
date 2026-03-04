@@ -6,17 +6,25 @@
 #ifndef USB_USBINTERFACE_HPP
 #define USB_USBINTERFACE_HPP
 
-#include "platform/Platform.hpp"
-#include "session/SessionManager.hpp"
+#include "usb/IUsbTransport.hpp"
 #include <cstddef>
 #include <cstdint>
+
+/**
+ * @namespace session
+ * @brief Session related types and functions.
+ */
+namespace session {
+struct SessionSnapshot;
+enum class SessionState : uint8_t;
+} // namespace session
 
 namespace usb {
 
 /**
  * @brief Maximum length of one command line (bytes).
  */
-constexpr size_t USB_CMD_MAX_LEN = 64;
+inline constexpr size_t USB_CMD_MAX_LEN = 64;
 
 /**
  * @enum CommandId
@@ -39,8 +47,8 @@ enum class CommandId : uint8_t {
  * @brief One parsed command with optional argument.
  */
 struct ParsedCommand {
-  CommandId id;
-  uint32_t arg; // e.g. value for SetConfig
+  CommandId id = CommandId::None;
+  uint32_t arg = 0;
 };
 
 /**
@@ -49,20 +57,20 @@ struct ParsedCommand {
  */
 class UsbInterface {
 public:
-  UsbInterface() noexcept = default;
+  explicit UsbInterface(IUsbTransport &transport) noexcept;
+
+  UsbInterface(const UsbInterface &) = delete;
+  UsbInterface &operator=(const UsbInterface &) = delete;
+  UsbInterface(UsbInterface &&) = delete;
+  UsbInterface &operator=(UsbInterface &&) = delete;
 
   /**
-   * @brief Initialize serial (e.g. USBSerial or BufferedSerial).
-   * @return Result of initialization.
+   * @brief Poll for a new line from USB.
+   * @param line_buffer Caller-provided buffer to store line
+   * @param max_len Maximum length of the buffer
+   * @return true if a line was received, false otherwise
    */
-  platform::Result init() noexcept;
-
-  /**
-   * @brief Poll for incoming data; parse and return one command if complete.
-   * @param cmd Parsed command.
-   * @return True if a command was parsed, false otherwise.
-   */
-  bool poll(ParsedCommand &cmd) noexcept;
+  [[nodiscard]] bool poll(char *line_buffer, size_t max_len) noexcept;
 
   /**
    * @brief Send status line (step count, state).
@@ -81,6 +89,12 @@ public:
    * @param msg Error message.
    */
   void sendError(const char *msg) noexcept;
+
+private:
+  IUsbTransport &_transport;
+  char _rx_buffer[USB_CMD_MAX_LEN]{};
+  std::size_t _rx_index{0};
+  bool _discarding{false};
 };
 
 } // namespace usb
