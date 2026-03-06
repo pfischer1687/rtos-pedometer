@@ -75,6 +75,16 @@ uv run tools/run_host_checks.py [--test/-t] [--lint/-l] [--coverage/-c]
 
 Flags can be combined (e.g. `-t -l`).
 
+## Building for HITL
+
+```ps1
+Remove-Item -Recurse -Force .\build -ErrorAction SilentlyContinue
+mkdir build && mkdir build/NUCLEO_F767ZI-Develop && cd build/NUCLEO_F767ZI-Develop
+cmake ../.. -GNinja -DCMAKE_BUILD_TYPE=Develop -DMBED_TARGET=NUCLEO_F767ZI -DTEST_ENTRY=ON -DUPLOAD_METHOD=STM32CUBE
+cmake --build . --target rtos-pedometer
+ninja flash-rtos-pedometer
+```
+
 ## References
 
 - [Mbed CE Documentation](https://mbed-ce.dev)

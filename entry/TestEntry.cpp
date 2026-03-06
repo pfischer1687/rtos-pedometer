@@ -4,13 +4,20 @@
  */
 
 #include "entry/FirmwareEntry.hpp"
-#include "mbed.h"
+#include "usb/UsbInterface.hpp"
+#include "usb/UsbTransport.hpp"
 
 namespace entry {
 
 [[noreturn]] int firmware_entry() {
+  usb::UsbTransport transport;
+  usb::UsbInterface usbInterface(transport);
+  char buffer[usb::USB_CMD_MAX_LEN];
+
   while (true) {
-    __NOP();
+    if (usbInterface.poll(buffer, sizeof(buffer))) {
+      usbInterface.sendResponse(buffer);
+    }
   }
 }
 
