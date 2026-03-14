@@ -17,6 +17,7 @@ class UsbTransport final : public IUsbTransport {
 public:
   UsbTransport();
   std::optional<uint8_t> readChar() noexcept override;
+  void writeChar(char c) noexcept override;
   void writeLine(const char *msg) noexcept override;
 
 private:

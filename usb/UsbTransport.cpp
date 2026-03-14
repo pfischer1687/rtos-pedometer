@@ -26,6 +26,8 @@ std::optional<uint8_t> UsbTransport::readChar() noexcept {
   return std::nullopt;
 }
 
+void UsbTransport::writeChar(char c) noexcept { m_serial.write(&c, 1); }
+
 void UsbTransport::writeLine(const char *msg) noexcept {
   if (!msg)
     return;

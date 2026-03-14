@@ -1,0 +1,26 @@
+Cortex-Debug: VSCode debugger extension version 1.13.0-pre6 git(0074bab). Usage info: https://github.com/Marus/cortex-debug#usage
+Reading symbols from C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.3 rel1/bin/arm-none-eabi-objdump.exe --syms -C -h -w C:/Users/user/github/rtos-pedometer/build/NUCLEO_F767ZI-Develop/rtos-pedometer.elf
+Reading symbols from c:/program files (x86)/arm gnu toolchain arm-none-eabi/14.3 rel1/bin/arm-none-eabi-nm.exe --defined-only -S -l -C -p C:/Users/user/github/rtos-pedometer/build/NUCLEO_F767ZI-Develop/rtos-pedometer.elf
+Launching GDB: "C:/arm-gcc/bin/arm-none-eabi-gdb.exe" -q --interpreter=mi2
+    IMPORTANT: Set "showDevDebugOutput": "raw" in "launch.json" to see verbose GDB transactions here. Very helpful to debug issues or report problems
+Finished reading symbols from objdump: Time: 204 ms
+Finished reading symbols from nm: Time: 125 ms
+Output radix now set to decimal 10, hex a, octal 12.
+Input radix now set to decimal 10, hex a, octal 12.
+`C:\Users\user\github\rtos-pedometer\build\NUCLEO_F767ZI-Develop\rtos-pedometer.elf' has changed; re-reading symbols.
+Reset_Handler () at C:/Users/user/github/rtos-pedometer/mbed-os/targets/TARGET_STM/TARGET_STM32F7/TARGET_STM32F767xI/TOOLCHAIN_GCC_ARM\startup_stm32f767xx.S:62
+62	  ldr   sp, =_estack      /* set stack pointer */
+Program stopped, probably due to a reset and/or halt issued by debugger
+STM32 Successfully completed reset operation (System reset)
+Loading section .sec1, size 0xbc38 lma 0x200000
+Start address 0x00200560, load size 48184
+Transfer rate: 36 KB/sec, 16061 bytes/write.
+warning: could not convert 'main' from the host encoding (CP1252) to UTF-32.
+This normally should not happen, please file a bug report.
+
+Temporary breakpoint 1 at 0x207bde: file C:/Users/user/github/rtos-pedometer/main.cpp, line 12.
+Note: automatically using hardware breakpoints for read-only addresses.
+STM32 Successfully completed reset operation (System reset)
+
+Temporary breakpoint 1, main () at C:/Users/user/github/rtos-pedometer/main.cpp:12
+12	[[noreturn]] int main() { entry::firmware_entry(); }

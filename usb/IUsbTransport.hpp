@@ -31,6 +31,12 @@ public:
   virtual std::optional<uint8_t> readChar() noexcept = 0;
 
   /**
+   * @brief Write a character via USB.
+   * @param c The character to write.
+   */
+  virtual void writeChar(char c) noexcept = 0;
+
+  /**
    * @brief Write a line via USB.
    * @param msg The message to write.
    */

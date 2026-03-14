@@ -73,6 +73,11 @@ public:
   [[nodiscard]] bool poll(char *line_buffer, size_t max_len) noexcept;
 
   /**
+   * @brief Print the prompt to the USB.
+   */
+  void printPrompt() noexcept;
+
+  /**
    * @brief Send status line (step count, state).
    * @param snapshot Session snapshot.
    */
@@ -91,10 +96,33 @@ public:
   void sendError(const char *msg) noexcept;
 
 private:
+  /**
+   * @brief Handle backspace character.
+   * @param c The character to handle.
+   * @return true if the character was handled, false otherwise.
+   */
+  bool handleBackspace(char c) noexcept;
+
+  /**
+   * @brief Handle newline character.
+   * @param c The character to handle.
+   * @param line_buffer The line buffer to store the line.
+   * @param max_len The maximum length of the line buffer.
+   * @return true if the character was handled, false otherwise.
+   */
+  bool handleNewline(char c, char *line_buffer, std::size_t max_len) noexcept;
+
+  /**
+   * @brief Handle normal character.
+   * @param c The character to handle.
+   */
+  void handleNormalChar(char c) noexcept;
+
   IUsbTransport &_transport;
   char _rx_buffer[USB_CMD_MAX_LEN]{};
   std::size_t _rx_index{0};
   bool _discarding{false};
+  bool _lastWasCR{false};
 };
 
 } // namespace usb

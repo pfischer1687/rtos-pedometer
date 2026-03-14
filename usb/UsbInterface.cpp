@@ -11,49 +11,116 @@
 
 namespace usb {
 
+namespace {
+
+constexpr std::size_t MAX_BYTES_PER_POLL = 32;
+
+} // anonymous namespace
+
 UsbInterface::UsbInterface(IUsbTransport &transport) noexcept
     : _transport(transport) {}
+
+bool UsbInterface::handleBackspace(char c) noexcept {
+  if (c != '\b' && c != 127)
+    return false;
+
+  if (_rx_index > 0) {
+    _rx_index--;
+    _transport.writeChar('\b');
+    _transport.writeChar(' ');
+    _transport.writeChar('\b');
+  }
+  return true;
+}
+
+void UsbInterface::printPrompt() noexcept {
+  _transport.writeChar('>');
+  _transport.writeChar(' ');
+}
+
+bool UsbInterface::handleNewline(char c, char *line_buffer,
+                                 std::size_t max_len) noexcept {
+  if (c != '\n')
+    return false;
+
+  _transport.writeChar('\r');
+  _transport.writeChar('\n');
+
+  if (_rx_index == 0) {
+    printPrompt();
+    return false;
+  }
+
+  const std::size_t copy_len = std::min(_rx_index, max_len - 1);
+
+  std::memcpy(line_buffer, _rx_buffer, copy_len);
+  line_buffer[copy_len] = '\0';
+
+  _rx_index = 0;
+  _discarding = false;
+  return true;
+}
+
+void UsbInterface::handleNormalChar(char c) noexcept {
+  if (c < 32 || c > 126)
+    return;
+
+  if (_rx_index < USB_CMD_MAX_LEN - 1) {
+    _rx_buffer[_rx_index++] = c;
+    _transport.writeChar(c);
+  } else {
+    _transport.writeChar('\r');
+    _transport.writeChar('\n');
+    sendError("LINE_TOO_LONG");
+    printPrompt();
+
+    _discarding = false;
+    _rx_index = 0;
+  }
+}
 
 bool UsbInterface::poll(char *line_buffer, std::size_t max_len) noexcept {
   if (!line_buffer || max_len == 0) {
     return false;
   }
 
-  while (true) {
-    std::optional<uint8_t> ch = _transport.readChar();
-    if (ch == std::nullopt)
+  line_buffer[0] = '\0';
+  std::size_t processed = 0;
+
+  while (processed < MAX_BYTES_PER_POLL) {
+    auto ch = _transport.readChar();
+    if (!ch)
       break;
+    processed++;
+    char c = static_cast<char>(*ch);
+
+    if (c == '\r') {
+      c = '\n';
+      _lastWasCR = true;
+    } else if (c == '\n' && _lastWasCR) {
+      _lastWasCR = false;
+      continue;
+    } else {
+      _lastWasCR = false;
+    }
 
     if (_discarding) {
-      if (*ch == '\n') {
+      if (c == '\n') {
         _discarding = false;
+        _lastWasCR = false;
         _rx_index = 0;
+        printPrompt();
       }
       continue;
     }
 
-    if (*ch == '\r') {
+    if (handleBackspace(c))
       continue;
-    }
 
-    if (*ch == '\n') {
-      const std::size_t copy_len =
-          (_rx_index < max_len - 1) ? _rx_index : max_len - 1;
-
-      std::memcpy(line_buffer, _rx_buffer, copy_len);
-      line_buffer[copy_len] = '\0';
-
-      _rx_index = 0;
+    if (handleNewline(c, line_buffer, max_len))
       return true;
-    }
 
-    if (_rx_index < USB_CMD_MAX_LEN - 1) {
-      _rx_buffer[_rx_index++] = static_cast<char>(*ch);
-    } else {
-      _discarding = true;
-      _rx_index = 0;
-      sendError("LINE_TOO_LONG");
-    }
+    handleNormalChar(c);
   }
 
   return false;
