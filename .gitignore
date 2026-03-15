@@ -47,3 +47,4 @@ build/
 host_build/
 .logs/
 .coverage/
+tmp_errors/

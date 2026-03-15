@@ -20,9 +20,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(TEST_ENTRY "Use test entry (TestEntry.cpp) instead of production (ProductionEntry.cpp)" OFF)
 if(TEST_ENTRY)
-  set(ENTRY_SOURCE entry/TestEntry.cpp)
+  set(ENV_SOURCES entry/TestEntry.cpp entry/HITLProtocol.cpp)
 else()
-  set(ENTRY_SOURCE entry/ProductionEntry.cpp)
+  set(ENV_SOURCES entry/ProductionEntry.cpp)
 endif()
 
 set(APP_SOURCES
@@ -39,7 +39,7 @@ set(APP_SOURCES
     usb/UsbTransport.cpp
     led/RecordingLed.cpp
 )
-add_executable(${PROJECT_NAME} ${APP_SOURCES} ${ENTRY_SOURCE})
+add_executable(${PROJECT_NAME} ${APP_SOURCES} ${ENV_SOURCES})
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
