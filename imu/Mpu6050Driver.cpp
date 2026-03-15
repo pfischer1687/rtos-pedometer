@@ -385,6 +385,12 @@ platform::Result Mpu6050Driver::startSampling() noexcept {
     return platform::Result::InvalidState;
   }
 
+  if (_dataReadyInput == nullptr) {
+    return fault(platform::Result::DataNotReady);
+  }
+
+  _dataReadyInput->enable();
+
   const platform::Result enableIntResult =
       writeRegVerified(Register::INT_ENABLE, DATA_RDY_EN_BIT);
   if (!platform::isOk(enableIntResult))
@@ -398,6 +404,10 @@ platform::Result Mpu6050Driver::startSampling() noexcept {
 platform::Result Mpu6050Driver::stopSampling() noexcept {
   if (_state != DriverState::Sampling) {
     return platform::Result::InvalidState;
+  }
+
+  if (_dataReadyInput != nullptr) {
+    _dataReadyInput->disable();
   }
 
   const platform::Result disableIntResult =
@@ -417,6 +427,17 @@ void Mpu6050Driver::notifyDataReadyFromIsr() noexcept {
 
   _lastDataReadyTimestampUs.store(_timer.nowUs(), std::memory_order_release);
   _dataReadyFlag.store(true, std::memory_order_release);
+}
+
+void Mpu6050Driver::notifyDataReadyFromIsrStatic(void *ctx) noexcept {
+  static_cast<Mpu6050Driver *>(ctx)->notifyDataReadyFromIsr();
+}
+
+void Mpu6050Driver::attachDataReadyInput(
+    platform::IDataReadyInput &gpio) noexcept {
+  _dataReadyInput = &gpio;
+  _dataReadyInput->setCallback(&Mpu6050Driver::notifyDataReadyFromIsrStatic,
+                               this);
 }
 
 bool Mpu6050Driver::consumeDataReady() noexcept {

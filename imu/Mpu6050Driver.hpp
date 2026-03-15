@@ -9,9 +9,9 @@
 #ifndef IMU_MPU6050_DRIVER_HPP
 #define IMU_MPU6050_DRIVER_HPP
 
+#include "platform/Gpio.hpp"
 #include "platform/I2CProvider.hpp"
 #include "platform/Platform.hpp"
-
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -200,6 +200,18 @@ public:
   void notifyDataReadyFromIsr() noexcept;
 
   /**
+   * @brief Static callback for data-ready interrupt.
+   * @param ctx Context pointer.
+   */
+  static void notifyDataReadyFromIsrStatic(void *ctx) noexcept;
+
+  /**
+   * @brief Attach the data-ready input.
+   * @param gpio Data-ready input.
+   */
+  void attachDataReadyInput(platform::IDataReadyInput &gpio) noexcept;
+
+  /**
    * @brief Consume the data-ready signal.
    * @return True if data-ready had been set since last consume; false
    * otherwise.
@@ -244,7 +256,7 @@ public:
    * @return bool.
    */
   bool isReadyForSampling() const noexcept {
-    return _state == DriverState::Configured;
+    return (_state == DriverState::Configured) && (_dataReadyInput != nullptr);
   }
 
   /**
@@ -337,6 +349,7 @@ private:
   platform::II2CProvider &_i2c;
   platform::ITimer &_timer;
   uint8_t _i2cAddr7Bit{0};
+  platform::IDataReadyInput *_dataReadyInput{nullptr};
   std::atomic<bool> _dataReadyFlag{false};
   std::atomic<platform::TickUs> _lastDataReadyTimestampUs{0};
 };

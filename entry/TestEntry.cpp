@@ -5,6 +5,10 @@
 
 #include "entry/FirmwareEntry.hpp"
 #include "entry/HITLProtocol.hpp"
+#include "imu/Mpu6050Driver.hpp"
+#include "platform/Gpio.hpp"
+#include "platform/I2CProvider.hpp"
+#include "platform/Platform.hpp"
 #include "usb/UsbInterface.hpp"
 #include "usb/UsbTransport.hpp"
 #include <cstring>
@@ -12,6 +16,11 @@
 namespace entry {
 
 namespace {
+
+/**
+ * @brief MPU-6050 I2C address (7-bit).
+ */
+constexpr uint8_t I2C_ADDR_7_BIT = 0x68u;
 
 /**
  * @brief Trim leading and trailing whitespace (space or tab) from a buffer.
@@ -40,6 +49,9 @@ constexpr std::string_view trimBuffer(const char *buffer) noexcept {
 } // anonymous namespace
 
 [[noreturn]] int firmware_entry() {
+  imu::Mpu6050Driver imu(platform::i2c(), platform::timer(), I2C_ADDR_7_BIT);
+  imu.attachDataReadyInput(platform::dataReadyInput());
+
   usb::UsbTransport transport;
   usb::UsbInterface usbInterface(transport);
 
@@ -61,7 +73,7 @@ constexpr std::string_view trimBuffer(const char *buffer) noexcept {
       usbInterface.sendResponse(response);
 
       const std::optional<HITLCommand> cmd = parseHITLCommand(trimmed);
-      dispatchHITLCommand(usbInterface, cmd);
+      dispatchHITLCommand(usbInterface, imu, cmd);
       usbInterface.printPrompt();
     }
   }

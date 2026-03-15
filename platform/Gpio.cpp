@@ -35,8 +35,10 @@ public:
     m_pin.mode(PullNone);
   }
 
-  void setCallback(DataReadyCallback cb) noexcept override {
+  void setCallback(DataReadyCallback cb, void *ctx) noexcept override {
     m_callback = cb;
+    m_ctx = ctx;
+
     if (cb != nullptr) {
       m_pin.rise(mbed::callback(this, &DataReadyInputImpl::isrRise));
     } else {
@@ -54,12 +56,13 @@ private:
    */
   void isrRise() {
     if (m_callback != nullptr) {
-      m_callback();
+      m_callback(m_ctx);
     }
   }
 
   mbed::InterruptIn m_pin;
   volatile DataReadyCallback m_callback;
+  void *m_ctx;
 };
 
 class LedOutputImpl final : public ILedOutput {

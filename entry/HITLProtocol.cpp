@@ -4,6 +4,7 @@
  */
 
 #include "entry/HITLProtocol.hpp"
+#include "platform/Platform.hpp"
 #include <cctype>
 #include <cstddef>
 #include <optional>
@@ -79,6 +80,7 @@ std::optional<HITLCommand> parseHITLCommand(std::string_view line) {
 }
 
 void dispatchHITLCommand(usb::UsbInterface &usbInterface,
+                         imu::Mpu6050Driver &imu,
                          const std::optional<HITLCommand> &cmd) {
 
   if (!cmd.has_value()) {
@@ -90,18 +92,31 @@ void dispatchHITLCommand(usb::UsbInterface &usbInterface,
   case HITLCommand::PING:
     usbInterface.sendResponse("PONG");
     break;
-  case HITLCommand::INIT:
-    usbInterface.sendResponse("INIT OK");
+  case HITLCommand::INIT: {
+    const platform::Result r = imu.init();
+    usbInterface.sendResponse(platform::isOk(r) ? "IMU_INIT_OK"
+                                                : "IMU_INIT_FAIL");
     break;
-  case HITLCommand::CONFIGURE:
-    usbInterface.sendResponse("CONFIGURED");
+  }
+  case HITLCommand::CONFIGURE: {
+    const imu::ImuConfig config{};
+    const platform::Result r = imu.configure(config);
+    usbInterface.sendResponse(platform::isOk(r) ? "IMU_CONFIG_OK"
+                                                : "IMU_CONFIG_FAIL");
     break;
-  case HITLCommand::START:
-    usbInterface.sendResponse("STARTED");
+  }
+  case HITLCommand::START: {
+    const platform::Result r = imu.startSampling();
+    usbInterface.sendResponse(platform::isOk(r) ? "IMU_START_OK"
+                                                : "IMU_START_FAIL");
     break;
-  case HITLCommand::STOP:
-    usbInterface.sendResponse("STOPPED");
+  }
+  case HITLCommand::STOP: {
+    const platform::Result r = imu.stopSampling();
+    usbInterface.sendResponse(platform::isOk(r) ? "IMU_STOP_OK"
+                                                : "IMU_STOP_FAIL");
     break;
+  }
   case HITLCommand::READ_N_BYTES:
     usbInterface.sendResponse("READING DATA");
     break;

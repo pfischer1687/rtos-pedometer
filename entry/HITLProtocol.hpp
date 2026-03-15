@@ -6,6 +6,7 @@
 #ifndef ENTRY_HITL_PROTOCOL_HPP
 #define ENTRY_HITL_PROTOCOL_HPP
 
+#include "imu/Mpu6050Driver.hpp"
 #include "usb/UsbInterface.hpp"
 #include <optional>
 #include <string_view>
@@ -34,9 +35,11 @@ std::optional<HITLCommand> parseHITLCommand(std::string_view line);
 /**
  * @brief Dispatch a HITL command.
  * @param usbInterface USB interface.
+ * @param imu MPU6050 driver instance.
  * @param cmd HITL command.
  */
 void dispatchHITLCommand(usb::UsbInterface &usbInterface,
+                         imu::Mpu6050Driver &imu,
                          const std::optional<HITLCommand> &cmd);
 
 } // namespace entry

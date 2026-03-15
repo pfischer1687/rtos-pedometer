@@ -63,8 +63,8 @@ Then set your breeakpoints and press F5.
 From the repo root, use Python 3.14 and uv to run the full gate (build, test, lint, coverage) or individual steps:
 
 ```bash
-uv venv --python 3.14
-uv pip install -r requirements.txt
+# uv venv --python 3.14
+.\.venv\Scripts\activate
 uv run tools/run_host_checks.py [--test/-t] [--lint/-l] [--coverage/-c]
 ```
 

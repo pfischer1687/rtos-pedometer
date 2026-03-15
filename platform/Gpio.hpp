@@ -17,7 +17,7 @@ namespace platform {
  * @typedef DataReadyCallback
  * @brief Callback type for data-ready interrupt.
  */
-using DataReadyCallback = void (*)(void);
+using DataReadyCallback = void (*)(void *);
 
 /**
  * @interface IDataReadyInput
@@ -30,8 +30,9 @@ public:
   /**
    * @brief Set callback invoked on data-ready (rising edge).
    * @param cb Callback function.
+   * @param ctx Context pointer.
    */
-  virtual void setCallback(DataReadyCallback cb) noexcept = 0;
+  virtual void setCallback(DataReadyCallback cb, void *ctx) noexcept = 0;
 
   /**
    * @brief Enable the data-ready interrupt.
