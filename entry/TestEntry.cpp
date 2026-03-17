@@ -72,8 +72,8 @@ constexpr std::string_view trimBuffer(const char *buffer) noexcept {
       response[prefix_len + line_len] = '\0';
       usbInterface.sendResponse(response);
 
-      const std::optional<HITLCommand> cmd = parseHITLCommand(trimmed);
-      dispatchHITLCommand(usbInterface, imu, cmd);
+      const ParsedCommand parsedCmd = parseCommand(trimmed);
+      dispatchHITLCommand(usbInterface, imu, parsedCmd);
       usbInterface.printPrompt();
     }
   }

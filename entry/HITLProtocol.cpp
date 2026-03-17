@@ -7,6 +7,8 @@
 #include "platform/Platform.hpp"
 #include <cctype>
 #include <cstddef>
+#include <cstdio>
+#include <limits>
 #include <optional>
 #include <string_view>
 
@@ -31,6 +33,7 @@ constexpr bool caseInsensitiveEquals(std::string_view a,
 
     if (ca >= 'a' && ca <= 'z')
       ca -= ('a' - 'A');
+
     if (cb >= 'a' && cb <= 'z')
       cb -= ('a' - 'A');
 
@@ -41,7 +44,7 @@ constexpr bool caseInsensitiveEquals(std::string_view a,
 }
 
 /**
- * @brief HITL command table for lookup.
+ * @brief Command entry for the command table.
  */
 struct CommandEntry {
   std::string_view name;
@@ -60,35 +63,111 @@ constexpr CommandEntry commandTable[] = {
     {"READ_N_BYTES", HITLCommand::READ_N_BYTES},
 };
 
-} // anonymous namespace
+constexpr std::size_t COMMAND_COUNT =
+    sizeof(commandTable) / sizeof(commandTable[0]);
 
-std::optional<HITLCommand> parseHITLCommand(std::string_view line) {
-  if (line.empty()) {
-    return std::nullopt;
+constexpr platform::TickUs READ_SAMPLE_TIMEOUT_US = 100000u; // 100 ms
+constexpr unsigned int READ_POLL_DELAY_MS = 1u;
+
+/**
+ * @brief Trim leading whitespace (space or tab).
+ */
+constexpr std::string_view trimLeading(std::string_view s) noexcept {
+  while (!s.empty() && (s[0] == ' ' || s[0] == '\t')) {
+    s.remove_prefix(1);
+  }
+  return s;
+}
+
+/**
+ * @brief Extract next token (non-whitespace run); advance rest past the token.
+ */
+constexpr std::string_view nextToken(std::string_view &rest) noexcept {
+  rest = trimLeading(rest);
+  if (rest.empty())
+    return {};
+
+  const std::size_t start = 0u;
+  std::size_t len = 0u;
+
+  while (len < rest.size() && rest[len] != ' ' && rest[len] != '\t') {
+    ++len;
   }
 
-  constexpr std::size_t commandCount =
-      sizeof(commandTable) / sizeof(commandTable[0]);
+  std::string_view token = rest.substr(start, len);
+  rest.remove_prefix(len);
+  return token;
+}
 
-  for (std::size_t i = 0; i < commandCount; ++i) {
-    if (caseInsensitiveEquals(line, commandTable[i].name)) {
-      return commandTable[i].cmd;
+} // anonymous namespace
+
+std::optional<std::uint16_t> parseInt(std::string_view s) noexcept {
+  s = trimLeading(s);
+  if (s.empty())
+    return std::nullopt;
+
+  std::uint16_t n = 0u;
+
+  for (char c : s) {
+    if (c < '0' || c > '9')
+      return std::nullopt;
+
+    const std::uint16_t digit = static_cast<std::uint16_t>(c - '0');
+
+    if (n > std::numeric_limits<std::uint16_t>::max() / 10u ||
+        (n == std::numeric_limits<std::uint16_t>::max() / 10u &&
+         digit > std::numeric_limits<std::uint16_t>::max() % 10u)) {
+      return std::nullopt;
+    }
+
+    n = n * 10u + digit;
+  }
+
+  return n;
+}
+
+ParsedCommand parseCommand(std::string_view line) noexcept {
+  ParsedCommand out{};
+  out.cmd = std::nullopt;
+  out.argCount = 0u;
+
+  std::string_view rest = trimLeading(line);
+  if (rest.empty())
+    return out;
+
+  const std::string_view name = nextToken(rest);
+  out.name = name;
+  if (name.empty())
+    return out;
+
+  for (std::size_t i = 0; i < MAX_ARGS; ++i) {
+    const std::string_view arg = nextToken(rest);
+    if (arg.empty())
+      break;
+
+    out.args[i] = arg;
+    out.argCount = i + 1u;
+  }
+
+  for (std::size_t i = 0; i < COMMAND_COUNT; ++i) {
+    if (caseInsensitiveEquals(name, commandTable[i].name)) {
+      out.cmd = commandTable[i].cmd;
+      break;
     }
   }
 
-  return std::nullopt;
+  return out;
 }
 
 void dispatchHITLCommand(usb::UsbInterface &usbInterface,
-                         imu::Mpu6050Driver &imu,
-                         const std::optional<HITLCommand> &cmd) {
+                         imu::Mpu6050Driver &imu, const ParsedCommand &parsed) {
 
-  if (!cmd.has_value()) {
+  if (!parsed.cmd.has_value()) {
     usbInterface.sendResponse("UNKNOWN_COMMAND");
     return;
   }
 
-  switch (cmd.value()) {
+  switch (parsed.cmd.value()) {
   case HITLCommand::PING:
     usbInterface.sendResponse("PONG");
     break;
@@ -117,9 +196,64 @@ void dispatchHITLCommand(usb::UsbInterface &usbInterface,
                                                 : "IMU_STOP_FAIL");
     break;
   }
-  case HITLCommand::READ_N_BYTES:
-    usbInterface.sendResponse("READING DATA");
+  case HITLCommand::READ_N_BYTES: {
+    if (parsed.argCount < 1u) {
+      usbInterface.sendResponse("INVALID_ARGUMENT");
+      return;
+    }
+
+    const std::optional<std::uint16_t> nBytes = parseInt(parsed.args[0]);
+    if (!nBytes.has_value() || nBytes.value() == 0u) {
+      usbInterface.sendResponse("INVALID_ARGUMENT");
+      return;
+    }
+
+    if (!imu.isSampling()) {
+      usbInterface.sendResponse("INVALID_STATE");
+      return;
+    }
+
+    platform::ITimer &timer = platform::timer();
+    char msgBuf[96];
+    int len =
+        std::snprintf(msgBuf, sizeof(msgBuf), "READ_START %u", nBytes.value());
+    if (len > 0 && static_cast<std::size_t>(len) < sizeof(msgBuf)) {
+      usbInterface.sendResponse(msgBuf);
+    }
+
+    imu::ImuSample sample{};
+    for (std::uint16_t i = 0u; i < nBytes.value(); ++i) {
+      const platform::TickUs startUs = timer.nowUs();
+
+      while (!imu.consumeDataReady()) {
+        timer.delayMs(READ_POLL_DELAY_MS);
+        const platform::TickUs elapsedUs =
+            platform::elapsed(startUs, timer.nowUs());
+
+        if (elapsedUs >= READ_SAMPLE_TIMEOUT_US) {
+          usbInterface.sendResponse("READ_TIMEOUT");
+          return;
+        }
+      }
+
+      const platform::Result readResult = imu.readSample(sample);
+      if (!platform::isOk(readResult)) {
+        usbInterface.sendResponse("READ_FAIL");
+        return;
+      }
+
+      len = std::snprintf(msgBuf, sizeof(msgBuf), "SAMPLE %u %d %d %d %lu", i,
+                          sample.accel[0], sample.accel[1], sample.accel[2],
+                          static_cast<unsigned long>(sample.timestampUs));
+
+      if (len > 0 && static_cast<std::size_t>(len) < sizeof(msgBuf)) {
+        usbInterface.sendResponse(msgBuf);
+      }
+    }
+
+    usbInterface.sendResponse("READ_DONE");
     break;
+  }
   default:
     usbInterface.sendResponse("UNKNOWN_COMMAND");
     break;
