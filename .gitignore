@@ -44,6 +44,20 @@
 build/
 .cache/
 
+# IDE specific files and directories
+.idea/
+# .vscode/
+.cursor/
+*.iws
+*.swp
+*.bak
+*.sublime-project
+*.sublime-workspace
+nbproject/
+.DS_Store
+Thumbs.db
+
+# User defined directories
 host_build/
 .logs/
 .coverage/
