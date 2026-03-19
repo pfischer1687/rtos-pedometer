@@ -22,7 +22,7 @@ class SerialTransport:
         self,
         port: str,
         baud: int = 115200,
-        timeout_s: float = 1.0,
+        timeout_s: float = 5.0,
     ) -> None:
         """Initialize transport with serial connection parameters.
 
@@ -108,27 +108,31 @@ class SerialTransport:
 
         logger.debug("SENT: %s", cleaned_line)
 
-    def read_line(self) -> str:
+    def read_line(self, timeout_s: float | None = None) -> str:
         """Read one non-empty line (stripped of CR/LF) before timeout.
 
         Reads in a non-blocking loop until a full line is received or
         the given timeout is exceeded. Empty lines are ignored.
+
+        Args:
+            timeout_s: Seconds to wait for a line; uses instance default if None.
 
         Returns:
             The first non-empty stripped line (no CR/LF).
 
         Raises:
             RuntimeError: If the port is not open.
-            TimeoutError: If timeout_s is exceeded before a non-empty line.
+            TimeoutError: If timeout is exceeded before a non-empty line.
         """
         ser = self._ensure_open()
-        deadline = time.monotonic() + self._timeout_s
+        wait_s = self._timeout_s if timeout_s is None else timeout_s
+        deadline = time.monotonic() + wait_s
         buf = bytearray()
 
         while True:
             if time.monotonic() >= deadline:
                 raise TimeoutError(
-                    f"read_line timed out after {self._timeout_s}s without a complete line"
+                    f"read_line timed out after {wait_s}s without a complete line"
                 )
 
             try:
