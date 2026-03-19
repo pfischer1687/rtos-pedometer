@@ -66,7 +66,7 @@ your virtual environment with [uv](https://docs.astral.sh/uv/):
 ```sh
 uv venv --python 3.14
 .\.venv\Scripts\activate
-uv pip install -r requirements.txt
+uv pip install -e .[dev]
 ```
 
 ### Host-quality gate (CI / local checks)
