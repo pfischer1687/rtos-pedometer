@@ -84,15 +84,53 @@ uv run tools/run_host_checks.py [--test/-t] [--lint/-l] [--coverage/-c]
 
 Flags can be combined (e.g. `-t -l`).
 
-### Building for HITL
+### Running HITL Tests
 
-```ps1
-Remove-Item -Recurse -Force .\build -ErrorAction SilentlyContinue
-mkdir build && mkdir build/NUCLEO_F767ZI-Develop && cd build/NUCLEO_F767ZI-Develop
-cmake ../.. -GNinja -DCMAKE_BUILD_TYPE=Develop -DMBED_TARGET=NUCLEO_F767ZI -DTEST_ENTRY=ON -DUPLOAD_METHOD=STM32CUBE
-cmake --build . --target rtos-pedometer
-ninja flash-rtos-pedometer
+The Hardware-in-the-Loop (HITL) test runner builds, flashes, and runs automated tests of firmware functionality on hardware.
+
+#### Basic Usage
+
+```bash
+python tools/hitl_runner.py --port <SERIAL_PORT>
 ```
+
+Example:
+
+```bash
+python tools/hitl_runner.py --port COM5
+```
+
+This builds/flashes the firmware and runs 1 iteration with 100 IMU samples by default.
+
+#### Optional Arguments
+
+| Argument     | Description                                             |
+| ------------ | ------------------------------------------------------- |
+| `--port`     | Serial port of the target board (required)              |
+| `--baud`     | Serial baud rate (default: 115200)                      |
+| `--samples`  | Number of IMU samples per iteration (default: 100)      |
+| `--timeout`  | Timeout in seconds for reading IMU data (default: 30.0) |
+| `--no-flash` | Skip build/flash; only run HITL tests                   |
+| `--verbose`  | Set the logging verbosity from `INFO` to `DEBUG`        |
+
+Example:
+
+```bash
+python tools/hitl_runner.py --port /dev/ttyUSB0 --baud 115200 --samples 200 --timeout 60 --no-flash -v
+```
+
+#### Exit Codes
+
+| Code | Meaning                                                |
+| ---- | ------------------------------------------------------ |
+| `0`  | HITL tests passed                                      |
+| `1`  | HITL tests failed (validation/protocol error)          |
+| `2`  | Infrastructure failure (build, flash, or serial error) |
+| `3`  | Invalid command-line arguments                         |
+
+### Log Output
+
+Logs for unit and HITL tests are saved to a timestamped file. Location is shown at the end of the run (something like `.logs/hitl_runner_YYYY-MM-DD_HH-MM-SS.log`)
 
 ## References
 

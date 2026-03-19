@@ -58,6 +58,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="If set, do not build and flash before running.",
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Enable verbose logging (DEBUG level).",
+    )
     return parser.parse_args()
 
 
@@ -68,14 +74,19 @@ def main() -> int:
     log_file = setup_logging(LOGGER_NAME, REPO_ROOT)
     log = _logger()
 
+    if args.verbose:
+        log.setLevel(logging.DEBUG)
+        log.debug("Verbose logging enabled")
+
     log.info("Starting HITL runner")
     log.info(
-        "Config: port=%s baud=%d samples=%d timeout=%.1f no_flash=%s",
+        "Config: port=%s baud=%d samples=%d timeout=%.1f no_flash=%s verbose=%s",
         args.port,
         args.baud,
         args.samples,
         args.timeout,
         args.no_flash,
+        args.verbose,
     )
 
     if args.samples <= 0:
@@ -84,6 +95,10 @@ def main() -> int:
         return 3
     if args.timeout <= 0:
         log.error("--timeout must be > 0")
+        log.info("Log file: %s", log_file)
+        return 3
+    if args.baud <= 0:
+        log.error("--baud must be > 0")
         log.info("Log file: %s", log_file)
         return 3
 
