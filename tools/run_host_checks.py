@@ -5,8 +5,6 @@ Orchestrates formatting (clang-format), host pipeline (test/build/), and
 target pipeline (build/).
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import logging
@@ -16,9 +14,9 @@ import shutil
 import stat
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
+from tools.common.logging import setup_logging
 
 if TYPE_CHECKING:
     from argparse import Namespace
@@ -66,35 +64,6 @@ EXCLUDE_DIRS = (
 def _logger() -> logging.Logger:
     """Return the shared logger (configured by setup_logging when run as main)."""
     return logging.getLogger(LOGGER_NAME)
-
-
-def setup_logging(repo_root: Path) -> Path:
-    """
-    Configure logging: console at INFO, file at DEBUG.
-    Log file: repo_root/{DIR_LOGS}/host_gate_<TIMESTAMP>.log.
-    """
-    log_dir = repo_root / DIR_LOGS
-    log_dir.mkdir(exist_ok=True)
-    log_file = log_dir / f"host_gate_{datetime.now():%Y%m%d_%H%M%S}.log"
-
-    logger = logging.getLogger(LOGGER_NAME)
-    logger.setLevel(logging.DEBUG)
-    logger.handlers.clear()
-    formatter = logging.Formatter(
-        "%(asctime)s %(levelname)s: %(message)s", datefmt="%H:%M:%S"
-    )
-
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.INFO)
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
-
-    fh = logging.FileHandler(log_file, encoding="utf-8")
-    fh.setLevel(logging.DEBUG)
-    fh.setFormatter(formatter)
-    logger.addHandler(fh)
-
-    return log_file
 
 
 def run_cmd(
@@ -279,7 +248,7 @@ def _remove_directory(path: Path, step_name: str) -> bool:
 class HostPipeline:
     """Host quality gate pipeline: clean, configure, build, clang-tidy, unit tests, coverage."""
 
-    def __init__(self, repo_root: Path, args: Namespace):
+    def __init__(self, repo_root: Path, args: "Namespace"):
         self.repo_root = repo_root
         self.args = args
         self.log = _logger()
@@ -424,7 +393,7 @@ class HostPipeline:
         return True
 
 
-def run_target_pipeline(repo_root: Path, args: Namespace) -> bool:
+def run_target_pipeline(repo_root: Path) -> bool:
     """
     Run the target (firmware) quality gate. Build directory: {DIR_BUILD}/.
     Steps: clean, configure (same as VSCode), build, clang-tidy on sources
@@ -471,7 +440,7 @@ def main() -> int:
     Exit 0 if all requested steps succeed, 1 if any step fails.
     """
     repo_root = REPO_ROOT
-    log_file = setup_logging(repo_root)
+    log_file = setup_logging(LOGGER_NAME, repo_root)
     log = _logger()
 
     parser = argparse.ArgumentParser(
@@ -527,7 +496,7 @@ def main() -> int:
 
     target_ok = True
     if run_target_requested:
-        target_ok = run_target_pipeline(repo_root, args) if format_ok else False
+        target_ok = run_target_pipeline(repo_root) if format_ok else False
 
     host_ok = True
     if run_host_requested:

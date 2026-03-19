@@ -58,13 +58,22 @@ This will:
 
 Then set your breeakpoints and press F5.
 
-## Host-quality gate (CI / local checks)
+## Tools
+
+There are Python utility scripts for unit and HITL (Hardware In The Loop) testing. You can build
+your virtual environment with [uv](https://docs.astral.sh/uv/):
+
+```sh
+uv venv --python 3.14
+.\.venv\Scripts\activate
+uv pip install -r requirements.txt
+```
+
+### Host-quality gate (CI / local checks)
 
 From the repo root, use Python 3.14 and uv to run the full gate (build, test, lint, coverage) or individual steps:
 
 ```bash
-# uv venv --python 3.14
-.\.venv\Scripts\activate
 uv run tools/run_host_checks.py [--test/-t] [--lint/-l] [--coverage/-c]
 ```
 
@@ -75,7 +84,7 @@ uv run tools/run_host_checks.py [--test/-t] [--lint/-l] [--coverage/-c]
 
 Flags can be combined (e.g. `-t -l`).
 
-## Building for HITL
+### Building for HITL
 
 ```ps1
 Remove-Item -Recurse -Force .\build -ErrorAction SilentlyContinue
