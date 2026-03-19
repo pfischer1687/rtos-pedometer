@@ -91,27 +91,27 @@ The Hardware-in-the-Loop (HITL) test runner builds, flashes, and runs automated 
 #### Basic Usage
 
 ```bash
-python tools/hitl_runner.py --port <SERIAL_PORT>
+uv run tools/hitl_runner.py --port <SERIAL_PORT>
 ```
 
 Example:
 
 ```bash
-python tools/hitl_runner.py --port COM5
+uv run tools/hitl_runner.py --port COM5
 ```
 
 This builds/flashes the firmware and runs 1 iteration with 100 IMU samples by default.
 
 #### Optional Arguments
 
-| Argument     | Description                                             |
-| ------------ | ------------------------------------------------------- |
-| `--port`     | Serial port of the target board (required)              |
-| `--baud`     | Serial baud rate (default: 115200)                      |
-| `--samples`  | Number of IMU samples per iteration (default: 100)      |
-| `--timeout`  | Timeout in seconds for reading IMU data (default: 30.0) |
-| `--no-flash` | Skip build/flash; only run HITL tests                   |
-| `--verbose`  | Set the logging verbosity from `INFO` to `DEBUG`        |
+| Argument       | Description                                             |
+| -------------- | ------------------------------------------------------- |
+| `--port`       | Serial port of the target board (required)              |
+| `--baud`       | Serial baud rate (default: 115200)                      |
+| `--samples`    | Number of IMU samples per iteration (default: 100)      |
+| `--timeout`    | Timeout in seconds for reading IMU data (default: 30.0) |
+| `--no-flash`   | Skip build/flash; only run HITL tests                   |
+| `--verbose/-v` | Set the logging verbosity from `INFO` to `DEBUG`        |
 
 Example:
 
