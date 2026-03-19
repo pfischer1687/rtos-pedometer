@@ -92,12 +92,11 @@ def main() -> int:
         baud_rate=args.baud,
         sample_count=args.samples,
         timeout=args.timeout,
-        no_flash=args.no_flash,
     )
     runner = HitlRunner(config=config)
 
     try:
-        if not config.no_flash:
+        if not args.no_flash:
             build_manager = BuildManager(repo_root=REPO_ROOT)
             log.info("Building and flashing firmware...")
             build_manager.run_all(clean=True)
@@ -109,10 +108,13 @@ def main() -> int:
         return 2
 
     if result.success:
-        log.info("HITL run passed: %s", result.message)
+        log.info(
+            "HITL run passed: %d iterations completed", result.iterations_completed
+        )
         log.info("Log file: %s", log_file)
         return 0
-    log.error("HITL run failed: %s", result.message)
+    log.error("HITL run failed: %s", result.message or "unknown")
+    log.info("Iterations completed: %d", result.iterations_completed)
     log.info("Log file: %s", log_file)
     return 1
 
