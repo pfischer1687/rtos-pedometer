@@ -98,9 +98,9 @@ def main() -> int:
 
     try:
         if not config.no_flash:
-            build_manager = BuildManager(project_root=REPO_ROOT)
+            build_manager = BuildManager(repo_root=REPO_ROOT)
             log.info("Building and flashing firmware...")
-            build_manager.build_and_flash()
+            build_manager.run_all(clean=True)
 
         result = runner.run()
     except Exception:
