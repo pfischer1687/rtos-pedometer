@@ -1,26 +1,33 @@
 """IMU device abstraction for HITL tests."""
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from __future__ import annotations
 
-if TYPE_CHECKING:
-    from tools.hitl.protocol import HitlProtocolClient
+import logging
+from dataclasses import dataclass
+import time
+from tools.hitl.protocol import HitlProtocolClient, ProtocolError
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_CMD_TIMEOUT_S = 5.0
+DEFAULT_READ_N_TIMEOUT_S = 30.0
 
 
 @dataclass
 class ImuSample:
-    """A single IMU sample."""
+    """A single IMU sample from the device."""
 
-    accel_x: int
-    accel_y: int
-    accel_z: int
-    timestamp_us: int = 0
+    index: int
+    ax: int
+    ay: int
+    az: int
+    timestamp_us: int
 
 
 class ImuDevice:
-    """Abstraction for the IMU on the target device."""
+    """Wraps HitlProtocolClient with IMU-specific commands and READ_N parsing."""
 
-    def __init__(self, protocol: "HitlProtocolClient") -> None:
+    def __init__(self, protocol: HitlProtocolClient) -> None:
         """Initialize IMU device with a protocol client.
 
         Args:
@@ -28,25 +35,116 @@ class ImuDevice:
         """
         self._protocol = protocol
 
-    def read_sample(self, timeout: float | None = None) -> ImuSample:
-        """Read a single IMU sample from the device.
+    def ping(self, timeout_s: float = DEFAULT_CMD_TIMEOUT_S) -> None:
+        """Sends `PING` and expects `PONG`."""
+        self._protocol.command_expect("PING", "PONG", timeout_s)
+
+    def init(self, timeout_s: float = DEFAULT_CMD_TIMEOUT_S) -> None:
+        """Sends `INIT` and expects `IMU_INIT_OK`."""
+        self._protocol.command_expect("INIT", "IMU_INIT_OK", timeout_s)
+
+    def configure(self, timeout_s: float = DEFAULT_CMD_TIMEOUT_S) -> None:
+        """Sends `CONFIGURE` and expects `IMU_CONFIG_OK`."""
+        self._protocol.command_expect("CONFIGURE", "IMU_CONFIG_OK", timeout_s)
+
+    def start(self, timeout_s: float = DEFAULT_CMD_TIMEOUT_S) -> None:
+        """Sends `START` and expects `IMU_START_OK`."""
+        self._protocol.command_expect("START", "IMU_START_OK", timeout_s)
+
+    def stop(self, timeout_s: float = DEFAULT_CMD_TIMEOUT_S) -> None:
+        """Sends `STOP` and expects `IMU_STOP_OK`."""
+        self._protocol.command_expect("STOP", "IMU_STOP_OK", timeout_s)
+
+    def read_n(
+        self,
+        n: int = 100,
+        timeout_s: float = DEFAULT_READ_N_TIMEOUT_S,
+    ) -> list[ImuSample]:
+        """Requests `n` samples and returns them as a list of `ImuSample` objects.
+
+        SAMPLE format: "SAMPLE i ax ay az timestamp" (space-separated integers).
 
         Args:
-            timeout: Optional timeout in seconds.
+            n: Number of samples to read (default: 100).
+            timeout_s: Maximum seconds for the whole READ_N sequence.
 
         Returns:
-            Parsed ImuSample.
+            List of `n` `ImuSample` objects in order.
         """
-        raise NotImplementedError
+        if n <= 0:
+            raise ValueError("n must be positive")
 
-    def read_samples(self, count: int, timeout: float | None = None) -> list[ImuSample]:
-        """Read multiple IMU samples.
+        self._protocol.command_expect(f"READ_N_BYTES {n}", f"READ_START {n}", timeout_s)
 
-        Args:
-            count: Number of samples to read.
-            timeout: Optional timeout for the whole operation.
+        deadline = time.monotonic() + timeout_s
+        samples: list[ImuSample] = []
+        for i in range(n):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ProtocolError(f"Timeout while reading samples ({i}/{n})")
 
-        Returns:
-            List of ImuSample.
-        """
-        raise NotImplementedError
+            while True:
+                line = self._protocol.read_line(timeout_s=remaining)
+
+                try:
+                    sample = _parse_sample_line(line, expected_index=i)
+                    break
+                except ProtocolError:
+                    logger.debug("Skipping non-sample line: %r", line)
+
+            samples.append(sample)
+            logger.debug("SAMPLE[%d]: %s", i, sample)
+
+        remaining = deadline - time.monotonic()
+        self._protocol.expect_line("READ_DONE", remaining)
+
+        return samples
+
+
+def _parse_sample_line(line: str, expected_index: int) -> ImuSample:
+    """Parses a single "SAMPLE i ax ay az timestamp" line.
+
+    Args:
+        line: Raw line (stripped of CR/LF).
+        expected_index: Expected value of i (must match).
+
+    Returns:
+        ImuSample with index, ax, ay, az, timestamp_us.
+
+    Raises:
+        ProtocolError: Wrong format, parse failure, or index mismatch.
+    """
+    parts = line.split()
+    if len(parts) != 6:
+        raise ProtocolError(
+            f"Malformed SAMPLE line: expected 6 fields (SAMPLE i ax ay az timestamp_us), "
+            f"got {len(parts)}: {line!r}"
+        )
+    if parts[0] != "SAMPLE":
+        raise ProtocolError(
+            f"Malformed SAMPLE line: expected leading 'SAMPLE', got {parts[0]!r}"
+        )
+
+    try:
+        index = int(parts[1])
+        ax = int(parts[2])
+        ay = int(parts[3])
+        az = int(parts[4])
+        timestamp_us = int(parts[5])
+    except (ValueError, IndexError) as e:
+        raise ProtocolError(
+            f"Malformed SAMPLE line: could not parse integers: {line!r}"
+        ) from e
+
+    if index != expected_index:
+        raise ProtocolError(
+            f"SAMPLE index mismatch: expected {expected_index}, got {index}"
+        )
+
+    return ImuSample(
+        index=index,
+        ax=ax,
+        ay=ay,
+        az=az,
+        timestamp_us=timestamp_us,
+    )
