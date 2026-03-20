@@ -65,7 +65,7 @@ your virtual environment with [uv](https://docs.astral.sh/uv/):
 
 ```sh
 uv venv --python 3.14
-.\.venv\Scripts\activate
+.venv\Scripts\activate
 uv pip install -e .[dev]
 ```
 
@@ -74,7 +74,7 @@ uv pip install -e .[dev]
 From the repo root, use Python 3.14 and uv to run the full gate (build, test, lint, coverage) or individual steps:
 
 ```bash
-uv run tools/run_host_checks.py [--test/-t] [--lint/-l] [--coverage/-c]
+uv run -m tools.run_host_checks [--test/-t] [--lint/-l] [--coverage/-c]
 ```
 
 - **No flags**: full gate (clean `test/build`, configure with host-check preset, build, run unit tests, clang-format check, clang-tidy, lcov coverage).
@@ -91,13 +91,13 @@ The Hardware-in-the-Loop (HITL) test runner builds, flashes, and runs automated 
 #### Basic Usage
 
 ```bash
-uv run tools/hitl_runner.py --port <SERIAL_PORT>
+uv run -m tools.hitl_runner --port <SERIAL_PORT>
 ```
 
 Example:
 
 ```bash
-uv run tools/hitl_runner.py --port COM5
+uv run -m tools.hitl_runner --port COM5
 ```
 
 This builds/flashes the firmware and runs 1 iteration with 100 IMU samples by default.
@@ -116,7 +116,7 @@ This builds/flashes the firmware and runs 1 iteration with 100 IMU samples by de
 Example:
 
 ```bash
-python tools/hitl_runner.py --port /dev/ttyUSB0 --baud 115200 --samples 200 --timeout 60 --no-flash -v
+uv run -m tools.hitl_runner --port /dev/ttyUSB0 --baud 115200 --samples 200 --timeout 60 --no-flash -v
 ```
 
 #### Exit Codes

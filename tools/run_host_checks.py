@@ -31,6 +31,7 @@ HOST_BUILD_CONFIG = "RelWithDebInfo"
 TARGET_VARIANT_DIR = "NUCLEO_F767ZI-Develop"
 TARGET_PROJECT_NAME = "rtos-pedometer"
 MBED_TARGET_DEFAULT = "NUCLEO_F767ZI"
+VENV_DIR = ".venv"
 
 _FORMAT_EXTENSIONS = frozenset(
     {
@@ -58,6 +59,7 @@ EXCLUDE_DIRS = (
     REPO_ROOT / DIR_MBED_OS,
     REPO_ROOT / DIR_BUILD,
     REPO_ROOT / DIR_TEST / DIR_BUILD,
+    REPO_ROOT / VENV_DIR,
 )
 
 
@@ -182,26 +184,26 @@ def run_clang_format(repo_root: Path, fix: bool) -> bool:
     build/, and test/build/.
     """
     log = _logger()
-    exclude_dirs = (
-        repo_root / DIR_MBED_OS,
-        repo_root / DIR_BUILD,
-        repo_root / DIR_TEST / DIR_BUILD,
-    )
+
     sources = [
         p
         for p in repo_root.rglob("*")
         if p.is_file()
         and p.suffix.lower() in _FORMAT_EXTENSIONS_LOWER
-        and not any(p.is_relative_to(d) for d in exclude_dirs)
+        and not any(p.is_relative_to(d) for d in EXCLUDE_DIRS)
     ]
+
     sources = sorted(sources)
     if not sources:
         log.warning("No C/C++ files found for clang-format; skipping.")
         return True
+
     log.info("[clang-format] Starting: %d files (fix=%s)", len(sources), fix)
     cmd = ["clang-format", "-i" if fix else "--dry-run", *[str(p) for p in sources]]
+
     if not fix:
         cmd.append("--Werror")
+
     return run_cmd(cmd, repo_root, "clang-format" + (" (fix)" if fix else " (check)"))
 
 
