@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.19)
 cmake_policy(VERSION 3.19...3.22)
 
 set(CMAKE_C_COMPILER "C:/arm-gcc/bin/arm-none-eabi-gcc.exe")
-set(CMAKE_CXX_COMPILER "C:/arm-gcc/bin/arm-none-eabi-gcc.exe")
+set(CMAKE_CXX_COMPILER "C:/arm-gcc/bin/arm-none-eabi-g++.exe")
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(MBED_APP_JSON_PATH ${CMAKE_CURRENT_SOURCE_DIR}/mbed_app.json5)
