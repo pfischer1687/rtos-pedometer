@@ -64,6 +64,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable verbose logging (DEBUG level).",
     )
+    parser.add_argument(
+        "--iterations",
+        type=int,
+        default=1,
+        help="Number of iterations to run (default: 1).",
+    )
     return parser.parse_args()
 
 
@@ -85,13 +91,14 @@ def main() -> int:
 
     log.info("Starting HITL runner")
     log.info(
-        "Config: port=%s baud=%d samples=%d timeout=%.1f no_flash=%s verbose=%s",
+        "Config: port=%s baud=%d samples=%d timeout=%.1f no_flash=%s verbose=%s iterations=%d",
         args.port,
         args.baud,
         args.samples,
         args.timeout,
         args.no_flash,
         args.verbose,
+        args.iterations,
     )
 
     if args.samples <= 0:
@@ -112,6 +119,7 @@ def main() -> int:
         baud_rate=args.baud,
         sample_count=args.samples,
         timeout=args.timeout,
+        iterations=args.iterations,
     )
     runner = HitlRunner(config=config)
 

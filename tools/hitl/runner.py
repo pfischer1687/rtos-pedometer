@@ -69,6 +69,7 @@ class HitlRunner:
 
         assert self._transport.is_open()
 
+        self._imu.reset(timeout_s=cmd_t)
         self._imu.init(timeout_s=cmd_t)
         self._imu.configure(timeout_s=cmd_t)
         self._imu.start(timeout_s=cmd_t)

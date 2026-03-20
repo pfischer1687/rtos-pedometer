@@ -112,6 +112,10 @@ class ImuDevice:
 
         return samples
 
+    def reset(self, timeout_s: float = DEFAULT_CMD_TIMEOUT_S) -> None:
+        """Sends `RESET` and expects `IMU_RESET_OK`."""
+        self._protocol.command_expect("RESET", "IMU_RESET_OK", timeout_s)
+
 
 def _parse_sample_line(line: str, expected_index: int) -> ImuSample:
     """Parses a single "SAMPLE i ax ay az timestamp" line.

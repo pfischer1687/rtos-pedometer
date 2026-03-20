@@ -61,6 +61,7 @@ constexpr CommandEntry commandTable[] = {
     {"START", HITLCommand::START},
     {"STOP", HITLCommand::STOP},
     {"READ_N_BYTES", HITLCommand::READ_N_BYTES},
+    {"RESET", HITLCommand::RESET},
 };
 
 constexpr std::size_t COMMAND_COUNT =
@@ -252,6 +253,12 @@ void dispatchHITLCommand(usb::UsbInterface &usbInterface,
     }
 
     usbInterface.sendResponse("READ_DONE");
+    break;
+  }
+  case HITLCommand::RESET: {
+    const platform::Result r = imu.reset();
+    usbInterface.sendResponse(platform::isOk(r) ? "IMU_RESET_OK"
+                                                : "IMU_RESET_FAIL");
     break;
   }
   default:

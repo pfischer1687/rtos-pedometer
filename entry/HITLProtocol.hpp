@@ -24,6 +24,7 @@ enum class HITLCommand {
   START,
   STOP,
   READ_N_BYTES,
+  RESET
 };
 
 /**
