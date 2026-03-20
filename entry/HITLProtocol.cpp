@@ -66,7 +66,7 @@ constexpr CommandEntry commandTable[] = {
 constexpr std::size_t COMMAND_COUNT =
     sizeof(commandTable) / sizeof(commandTable[0]);
 
-constexpr platform::TickUs READ_SAMPLE_TIMEOUT_US = 100000u; // 100 ms
+constexpr platform::TickUs READ_SAMPLE_TIMEOUT_US = 500'000u; // 500 ms
 constexpr unsigned int READ_POLL_DELAY_MS = 1u;
 
 /**

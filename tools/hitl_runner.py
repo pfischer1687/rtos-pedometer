@@ -11,15 +11,15 @@ from tools.hitl.runner import HitlRunner, RunnerConfig
 from tools.hitl.build import BuildManager
 from pathlib import Path
 import logging
-from tools.common.logging import setup_logging
+from tools.common.logging import setup_logging, HITL_LOGGER_NAME
 
-LOGGER_NAME = "hitl_runner"
+LOGGER_MODULE_PREFIX = "tools.hitl"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _logger() -> logging.Logger:
     """Get the logger for the HITL runner."""
-    return logging.getLogger(LOGGER_NAME)
+    return logging.getLogger(HITL_LOGGER_NAME)
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,7 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--samples",
         type=int,
-        default=100,
+        default=10,
         help="Number of IMU samples to collect.",
     )
     parser.add_argument(
@@ -71,12 +71,17 @@ def main() -> int:
     """Entry point: parse args, run HITL, exit with 0 on success else 1."""
     args = parse_args()
 
-    log_file = setup_logging(LOGGER_NAME, REPO_ROOT)
+    log_file = setup_logging(HITL_LOGGER_NAME, REPO_ROOT)
     log = _logger()
 
+    for name in logging.root.manager.loggerDict:
+        if name.startswith(LOGGER_MODULE_PREFIX):
+            logging.getLogger(name).propagate = True
+
     if args.verbose:
-        log.setLevel(logging.DEBUG)
-        log.debug("Verbose logging enabled")
+        for handler in log.handlers:
+            if isinstance(handler, logging.StreamHandler):
+                handler.setLevel(logging.DEBUG)
 
     log.info("Starting HITL runner")
     log.info(
@@ -113,7 +118,6 @@ def main() -> int:
     try:
         if not args.no_flash:
             build_manager = BuildManager(repo_root=REPO_ROOT)
-            log.info("Building and flashing firmware...")
             build_manager.run_all(clean=True)
 
         result = runner.run()

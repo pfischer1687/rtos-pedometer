@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any
-
+from tools.common.logging import HITL_LOGGER_NAME
 import serial
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(HITL_LOGGER_NAME)
 
 READ_LINE_WAIT_TIME_S = 0.005
 MAX_LINE_LENGTH = 4096
@@ -35,6 +35,7 @@ class SerialTransport:
         self._baud = baud
         self._timeout_s = timeout_s
         self._ser: serial.Serial | None = None
+        self._rx_buf = bytearray()
 
     def is_open(self) -> bool:
         """Check if the serial connection is open."""
@@ -74,6 +75,7 @@ class SerialTransport:
 
         self._ser.reset_input_buffer()
         self._ser.reset_output_buffer()
+        self._rx_buf.clear()
 
     def close(self) -> None:
         """Close the serial connection."""
@@ -127,42 +129,39 @@ class SerialTransport:
         ser = self._ensure_open()
         wait_s = self._timeout_s if timeout_s is None else timeout_s
         deadline = time.monotonic() + wait_s
-        buf = bytearray()
 
         while True:
-            if time.monotonic() >= deadline:
+            for sep in (b"\r\n", b"\n", b"\r"):
+                idx = self._rx_buf.find(sep)
+                if idx != -1:
+                    line = self._rx_buf[:idx]
+                    self._rx_buf = self._rx_buf[idx + len(sep) :]
+
+                    text = line.decode("utf-8", errors="replace").strip()
+                    if text:
+                        logger.debug("RECV: %s", text)
+                        return text
+
+            now = time.monotonic()
+            if now >= deadline:
                 raise TimeoutError(
                     f"read_line timed out after {wait_s}s without a complete line"
                 )
 
             try:
                 chunk = ser.read(ser.in_waiting or 1)
+                if chunk:
+                    logger.debug("RAW RECV: %r", chunk)
+                    self._rx_buf.extend(chunk)
             except serial.SerialException as e:
                 raise RuntimeError(f"Serial read failed: {e}") from e
 
             if not chunk:
-                sleep_time = min(READ_LINE_WAIT_TIME_S, deadline - time.monotonic())
+                sleep_time = min(READ_LINE_WAIT_TIME_S, deadline - now)
                 time.sleep(max(MIN_READ_LINE_WAIT_TIME_S, sleep_time))
-                continue
 
-            buf.extend(chunk)
-            if len(buf) > MAX_LINE_LENGTH:
-                raise RuntimeError("Line buffer overflow (no newline received)")
-
-            if b"\n" not in buf and b"\r" not in buf:
-                continue
-
-            line_b = bytearray()
-            for i, b in enumerate(buf):
-                line_b.append(b)
-                if b in (ord("\n"), ord("\r")):
-                    buf = buf[i + 1 :]
-                    break
-
-            text = line_b.decode("utf-8", errors="replace").strip("\r\n")
-            if text:
-                logger.debug("RECV: %s", text)
-                return text
+            if len(self._rx_buf) > MAX_LINE_LENGTH:
+                raise RuntimeError("Line buffer overflow")
 
     def drain(self) -> None:
         """Clear any buffered incoming data from the serial port.

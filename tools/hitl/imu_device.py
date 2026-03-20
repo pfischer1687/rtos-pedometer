@@ -6,8 +6,9 @@ import logging
 from dataclasses import dataclass
 import time
 from tools.hitl.protocol import HitlProtocolClient, ProtocolError
+from tools.common.logging import HITL_LOGGER_NAME
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(HITL_LOGGER_NAME)
 
 DEFAULT_CMD_TIMEOUT_S = 5.0
 DEFAULT_READ_N_TIMEOUT_S = 30.0
@@ -57,7 +58,7 @@ class ImuDevice:
 
     def read_n(
         self,
-        n: int = 100,
+        n: int = 10,
         timeout_s: float = DEFAULT_READ_N_TIMEOUT_S,
     ) -> list[ImuSample]:
         """Requests `n` samples and returns them as a list of `ImuSample` objects.
@@ -65,7 +66,7 @@ class ImuDevice:
         SAMPLE format: "SAMPLE i ax ay az timestamp" (space-separated integers).
 
         Args:
-            n: Number of samples to read (default: 100).
+            n: Number of samples to read (default: 10).
             timeout_s: Maximum seconds for the whole READ_N sequence.
 
         Returns:
@@ -85,6 +86,17 @@ class ImuDevice:
 
             while True:
                 line = self._protocol.read_line(timeout_s=remaining)
+
+                if line.startswith("ECHO:") or line.startswith(">"):
+                    continue
+
+                if line == "READ_TIMEOUT":
+                    raise ProtocolError(
+                        f"Device reported READ_TIMEOUT at sample {i}/{n}"
+                    )
+
+                if line == "READ_FAIL":
+                    raise ProtocolError(f"Device reported READ_FAIL at sample {i}/{n}")
 
                 try:
                     sample = _parse_sample_line(line, expected_index=i)

@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 import time
 from tools.hitl.transport import SerialTransport
+from tools.common.logging import HITL_LOGGER_NAME
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(HITL_LOGGER_NAME)
 
 
 class ProtocolError(Exception):
@@ -58,16 +59,27 @@ class HitlProtocolClient:
             ProtocolError: If the received line does not match expected.
         """
         deadline = time.monotonic() + timeout_s
-        line = ""
+        last_line = ""
 
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise ProtocolError(
-                    f"Protocol mismatch: expected {expected!r}, got {line or 'timeout'}"
+                    f"Protocol mismatch: expected {expected!r}, got {last_line or 'timeout'}"
                 )
 
             line = self.read_line(timeout_s=remaining)
+            last_line = line
+
+            if line.startswith("ECHO:"):
+                logger.debug("Ignoring echo: %r", line)
+                continue
+
+            if line == ">":
+                logger.debug("Ignoring prompt")
+                continue
+
+            logger.debug("RECV LINE: %r", line)
 
             if line == expected:
                 return

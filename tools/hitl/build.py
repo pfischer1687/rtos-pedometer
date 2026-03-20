@@ -8,6 +8,7 @@ import shutil
 import stat
 import subprocess
 from pathlib import Path
+from tools.common.logging import HITL_LOGGER_NAME
 
 BUILD_DIR_REL = Path("build") / "NUCLEO_F767ZI-Develop"
 TARGET_NAME = "rtos-pedometer"
@@ -17,7 +18,7 @@ TARGET_DEFAULT = "NUCLEO_F767ZI"
 UPLOAD_METHOD_DEFAULT = "STM32CUBE"
 NUM_FLASH_RETRIES = 2
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(HITL_LOGGER_NAME)
 
 
 class BuildError(RuntimeError):

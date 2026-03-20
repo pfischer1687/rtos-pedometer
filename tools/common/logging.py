@@ -4,6 +4,8 @@ import logging
 from pathlib import Path
 from datetime import datetime
 
+HITL_LOGGER_NAME = "hitl_runner"
+
 
 def setup_logging(name: str, repo_root: Path, log_subdir: str = ".logs") -> Path:
     """Setup logging for the project."""

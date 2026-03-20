@@ -5,12 +5,13 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 import time
+from tools.common.logging import HITL_LOGGER_NAME
 from tools.hitl.imu_device import ImuDevice, ImuSample
 from tools.hitl.protocol import HitlProtocolClient, ProtocolError
 from tools.hitl.transport import SerialTransport
 from tools.hitl.validator import ImuValidator, ValidationError
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(HITL_LOGGER_NAME)
 
 
 @dataclass
@@ -28,7 +29,7 @@ class RunnerConfig:
 
     port: str
     baud_rate: int = 115200
-    sample_count: int = 100
+    sample_count: int = 10
     timeout: float = 30.0
     iterations: int = 1
     cmd_timeout_s: float = 5.0
