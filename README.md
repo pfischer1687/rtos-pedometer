@@ -112,11 +112,12 @@ This builds/flashes the firmware and runs 1 iteration with 100 IMU samples by de
 | `--timeout`    | Timeout in seconds for reading IMU data (default: 30.0) |
 | `--no-flash`   | Skip build/flash; only run HITL tests                   |
 | `--verbose/-v` | Set the logging verbosity from `INFO` to `DEBUG`        |
+| `--iterations` | Set the number of HITL iterations to run                |
 
 Example:
 
 ```bash
-uv run -m tools.hitl_runner --port /dev/ttyUSB0 --baud 115200 --samples 200 --timeout 60 --no-flash -v
+uv run -m tools.hitl_runner --port COM5 --baud 115200 --samples 100 --timeout 5 --no-flash -v --iterations 2
 ```
 
 #### Exit Codes
