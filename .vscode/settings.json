@@ -28,7 +28,7 @@
   "clangd.arguments": [
     "--background-index",
     "--clang-tidy",
-    "--query-driver=C:/arm-gcc/bin/arm-none-eabi-gcc.exe"
+    "--query-driver=C:/arm-gcc/bin/arm-none-eabi-g++.exe"
   ],
   "C_Cpp.intelliSenseEngine": "disabled",
   "yaml.schemas": {

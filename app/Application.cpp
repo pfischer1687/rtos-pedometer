@@ -1,82 +1,84 @@
 /**
  * @file app/Application.cpp
- * @brief RTOS thread entry points, static IPC, and wiring (Mbed CE).
+ * @brief RTOS thread entry points.
  */
 
 #include "app/Application.hpp"
+#include "mbed_assert.h"
+#include "mbed_toolchain.h"
+#include "platform/Callback.h"
 #include "platform/Platform.hpp"
-#include "usb/UsbInterface.hpp"
-#include "usb/UsbTransport.hpp"
-
 #include "rtos/EventFlags.h"
 #include "rtos/Kernel.h"
 #include "rtos/Mail.h"
 #include "rtos/ThisThread.h"
 #include "rtos/Thread.h"
-
-#include "mbed_assert.h"
-#include "mbed_toolchain.h"
-#include "platform/Callback.h"
-
+#include "usb/UsbInterface.hpp"
+#include "usb/UsbTransport.hpp"
 #include <atomic>
 #include <cctype>
 #include <cstring>
 
-using namespace std::chrono_literals;
-
 namespace app {
+
 namespace {
 
-constexpr uint32_t kMailDepth = 16u;
+constexpr uint32_t MAIL_DEPTH = 16u;
 
-constexpr uint32_t kEvImuDataReady = 1u << 0;
-constexpr uint32_t kEvLedUpdate = 1u << 1;
+constexpr uint32_t EVENT_IMU_DATA_READY = 1u << 0;
+constexpr uint32_t EVENT_LED_UPDATE = 1u << 1;
 
-constexpr uint32_t kStackSensor = 3072u;
-constexpr uint32_t kStackSignal = 3072u;
-constexpr uint32_t kStackStep = 2048u;
-constexpr uint32_t kStackSession = 2048u;
-constexpr uint32_t kStackUsb = 4096u;
-constexpr uint32_t kStackLed = 1536u;
-constexpr auto kSessionPollInterval = 25ms;
+constexpr uint32_t STACK_SIZE_IMU_THREAD = 3072u;
+constexpr uint32_t STACK_SIZE_SIGNAL_THREAD = 3072u;
+constexpr uint32_t STACK_SIZE_STEP_THREAD = 2048u;
+constexpr uint32_t STACK_SIZE_SESSION_THREAD = 2048u;
+constexpr uint32_t STACK_SIZE_USB_THREAD = 4096u;
+constexpr uint32_t STACK_SIZE_LED_THREAD = 1536u;
 
-MBED_ALIGN(8) static unsigned char g_stackSensor[kStackSensor];
-MBED_ALIGN(8) static unsigned char g_stackSignal[kStackSignal];
-MBED_ALIGN(8) static unsigned char g_stackStep[kStackStep];
-MBED_ALIGN(8) static unsigned char g_stackSession[kStackSession];
-MBED_ALIGN(8) static unsigned char g_stackUsb[kStackUsb];
-MBED_ALIGN(8) static unsigned char g_stackLed[kStackLed];
+constexpr std::chrono::milliseconds SESSION_POLL_INTERVAL = 25ms;
+
+/**
+ * @struct ThreadStack
+ * @brief Thread stack template.
+ */
+template <size_t Size> struct ThreadStack {
+  alignas(std::max_align_t) unsigned char data[Size];
+};
+
+ThreadStack<STACK_SIZE_IMU_THREAD> g_stack_imu;
+ThreadStack<STACK_SIZE_SIGNAL_THREAD> g_stack_signal;
+ThreadStack<STACK_SIZE_STEP_THREAD> g_stack_step;
+ThreadStack<STACK_SIZE_SESSION_THREAD> g_stack_session;
+ThreadStack<STACK_SIZE_USB_THREAD> g_stack_usb;
+ThreadStack<STACK_SIZE_LED_THREAD> g_stack_led;
 
 rtos::EventFlags g_isrToSensorFlags{"imu_isr"};
 rtos::EventFlags g_sessionToLedFlags{"led_evt"};
 
-rtos::Mail<SensorFrameMsg, kMailDepth> g_sensorToSignalMail;
-rtos::Mail<ProcessedSignalMsg, kMailDepth> g_signalToStepMail;
-rtos::Mail<StepEventMsg, kMailDepth> g_stepToSessionMail;
-rtos::Mail<UsbCommandMsg, 4u> g_usbToSessionMail;
+rtos::Mail<RawImuDataFrame, MAIL_DEPTH> g_sensorToSignalMail;
+rtos::Mail<ProcessedImuDataFrame, MAIL_DEPTH> g_signalToStepMail;
+rtos::Mail<StepDetectionEvent, MAIL_DEPTH> g_stepToSessionMail;
+rtos::Mail<UsbCommand, MAIL_DEPTH> g_usbToSessionMail;
 
-// NOTE: sequence wraps naturally (uint32_t). Downstream logic must tolerate
-// wrap.
-std::atomic<uint32_t> g_sensorSeq{0};
-
-static std::atomic<uint32_t> g_sensorDropCount{0};
+std::atomic<uint32_t> g_imuSeq{0};
+static std::atomic<uint32_t> g_imuDropCount{0};
 static std::atomic<uint32_t> g_signalDropCount{0};
 static std::atomic<uint32_t> g_stepDropCount{0};
 static std::atomic<uint32_t> g_usbDropCount{0};
-
 static std::atomic<uint8_t> g_ledState{0};
 
-rtos::Thread g_thSensor(osPriorityRealtime, kStackSensor, g_stackSensor,
-                        "sensor_acq");
-rtos::Thread g_thSignal(osPriorityHigh, kStackSignal, g_stackSignal,
-                        "sig_proc");
-rtos::Thread g_thStep(osPriorityAboveNormal, kStackStep, g_stackStep,
-                      "step_det");
-rtos::Thread g_thSession(osPriorityBelowNormal, kStackSession, g_stackSession,
-                         "session");
-rtos::Thread g_thUsb(osPriorityLow, kStackUsb, g_stackUsb, "usb_cmd");
-rtos::Thread g_thLed(static_cast<osPriority>(2u), kStackLed, g_stackLed,
-                     "led_mgr");
+rtos::Thread g_imuThread(osPriorityRealtime, STACK_SIZE_IMU_THREAD,
+                         g_stack_imu.data, "imu_acq");
+rtos::Thread g_signalThread(osPriorityHigh, STACK_SIZE_SIGNAL_THREAD,
+                            g_stack_signal.data, "sig_proc");
+rtos::Thread g_stepThread(osPriorityAboveNormal, STACK_SIZE_STEP_THREAD,
+                          g_stack_step.data, "step_det");
+rtos::Thread g_sessionThread(osPriorityBelowNormal, STACK_SIZE_SESSION_THREAD,
+                             g_stack_session.data, "session");
+rtos::Thread g_usbThread(osPriorityLow, STACK_SIZE_USB_THREAD, g_stack_usb.data,
+                         "usb_cmd");
+rtos::Thread g_ledThread(static_cast<osPriority>(2u), STACK_SIZE_LED_THREAD,
+                         g_stack_led.data, "led_mgr");
 
 void trimInPlace(char *s) noexcept {
   if (s == nullptr || s[0] == '\0') {
@@ -146,7 +148,7 @@ void sensorAcquisitionThread() {
 void signalProcessingThread() {
   for (;;) {
     SensorFrameMsg *in = g_sensorToSignalMail.try_get_for(
-      rtos::Kernel::Clock::duration_u32::max());
+        rtos::Kernel::Clock::duration_u32::max());
     if (in == nullptr) {
       continue;
     }
@@ -270,15 +272,13 @@ void usbCommandThread() {
     if (commandEquals(lineBuf, "STATUS")) {
       char buf[128];
       std::snprintf(buf, sizeof(buf),
-          "DROP sensor=%lu signal=%lu step=%lu usb=%lu",
-          g_sensorDropCount.load(),
-          g_signalDropCount.load(),
-          g_stepDropCount.load(),
-          g_usbDropCount.load());
+                    "DROP sensor=%lu signal=%lu step=%lu usb=%lu",
+                    g_sensorDropCount.load(), g_signalDropCount.load(),
+                    g_stepDropCount.load(), g_usbDropCount.load());
       iface.sendResponse(buf);
       iface.printPrompt();
       continue;
-  }
+    }
   }
 }
 
@@ -307,7 +307,7 @@ void startThreads() {
   MBED_ASSERT(g_thLed.start(callback(ledManagerThread)) == osOK);
 }
 
-} // namespace
+} // anonymousnamespace
 
 void signalSensorAcquisitionFromIsr() noexcept {
   (void)g_isrToSensorFlags.set(kEvImuDataReady);
