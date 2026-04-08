@@ -9,6 +9,7 @@
 #include "platform/Gpio.hpp"
 #include "platform/I2CProvider.hpp"
 #include "platform/Platform.hpp"
+#include "platform/StringUtils.hpp"
 #include "usb/UsbInterface.hpp"
 #include "usb/UsbTransport.hpp"
 #include <cstring>
@@ -21,30 +22,6 @@ namespace {
  * @brief MPU-6050 I2C address (7-bit).
  */
 constexpr uint8_t I2C_ADDR_7_BIT = 0x68u;
-
-/**
- * @brief Trim leading and trailing whitespace (space or tab) from a buffer.
- * @param buffer Input C-string buffer.
- * @return string_view pointing to the trimmed content.
- */
-constexpr std::string_view trimBuffer(const char *buffer) noexcept {
-  if (!buffer)
-    return {};
-
-  const char *begin = buffer;
-  const char *end = buffer;
-  while (*end != '\0')
-    ++end;
-
-  while (begin < end && (*begin == ' ' || *begin == '\t'))
-    ++begin;
-
-  const char *last = end;
-  while (last > begin && (*(last - 1) == ' ' || *(last - 1) == '\t'))
-    --last;
-
-  return std::string_view(begin, last - begin);
-}
 
 } // anonymous namespace
 
@@ -65,7 +42,7 @@ constexpr std::string_view trimBuffer(const char *buffer) noexcept {
 
   while (true) {
     if (usbInterface.poll(buffer, sizeof(buffer))) {
-      std::string_view trimmed = trimBuffer(buffer);
+      std::string_view trimmed = platform::str::trim(buffer);
       size_t line_len = trimmed.size();
       std::memcpy(response, prefix, prefix_len);
       std::memcpy(response + prefix_len, trimmed.data(), line_len);

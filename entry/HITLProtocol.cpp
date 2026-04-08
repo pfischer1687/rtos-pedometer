@@ -5,7 +5,7 @@
 
 #include "entry/HITLProtocol.hpp"
 #include "platform/Platform.hpp"
-#include <cctype>
+#include "platform/StringUtils.hpp"
 #include <cstddef>
 #include <cstdio>
 #include <limits>
@@ -15,33 +15,6 @@
 namespace entry {
 
 namespace {
-
-/**
- * @brief Case-insensitive comparison of two string_views.
- * @param a First string view.
- * @param b Second string view.
- * @return True if the two string views are equal, false otherwise.
- */
-constexpr bool caseInsensitiveEquals(std::string_view a,
-                                     std::string_view b) noexcept {
-  if (a.size() != b.size())
-    return false;
-
-  for (std::size_t i = 0; i < a.size(); ++i) {
-    char ca = a[i];
-    char cb = b[i];
-
-    if (ca >= 'a' && ca <= 'z')
-      ca -= ('a' - 'A');
-
-    if (cb >= 'a' && cb <= 'z')
-      cb -= ('a' - 'A');
-
-    if (ca != cb)
-      return false;
-  }
-  return true;
-}
 
 /**
  * @brief Command entry for the command table.
@@ -70,40 +43,10 @@ constexpr std::size_t COMMAND_COUNT =
 constexpr platform::TickUs READ_SAMPLE_TIMEOUT_US = 500'000u; // 500 ms
 constexpr unsigned int READ_POLL_DELAY_MS = 1u;
 
-/**
- * @brief Trim leading whitespace (space or tab).
- */
-constexpr std::string_view trimLeading(std::string_view s) noexcept {
-  while (!s.empty() && (s[0] == ' ' || s[0] == '\t')) {
-    s.remove_prefix(1);
-  }
-  return s;
-}
-
-/**
- * @brief Extract next token (non-whitespace run); advance rest past the token.
- */
-constexpr std::string_view nextToken(std::string_view &rest) noexcept {
-  rest = trimLeading(rest);
-  if (rest.empty())
-    return {};
-
-  const std::size_t start = 0u;
-  std::size_t len = 0u;
-
-  while (len < rest.size() && rest[len] != ' ' && rest[len] != '\t') {
-    ++len;
-  }
-
-  std::string_view token = rest.substr(start, len);
-  rest.remove_prefix(len);
-  return token;
-}
-
 } // anonymous namespace
 
 std::optional<std::uint16_t> parseInt(std::string_view s) noexcept {
-  s = trimLeading(s);
+  s = platform::str::trim(s);
   if (s.empty())
     return std::nullopt;
 
@@ -132,17 +75,17 @@ ParsedCommand parseCommand(std::string_view line) noexcept {
   out.cmd = std::nullopt;
   out.argCount = 0u;
 
-  std::string_view rest = trimLeading(line);
+  std::string_view rest = platform::str::trim(line);
   if (rest.empty())
     return out;
 
-  const std::string_view name = nextToken(rest);
+  const std::string_view name = platform::str::nextToken(rest);
   out.name = name;
   if (name.empty())
     return out;
 
   for (std::size_t i = 0; i < MAX_ARGS; ++i) {
-    const std::string_view arg = nextToken(rest);
+    const std::string_view arg = platform::str::nextToken(rest);
     if (arg.empty())
       break;
 
@@ -151,7 +94,7 @@ ParsedCommand parseCommand(std::string_view line) noexcept {
   }
 
   for (std::size_t i = 0; i < COMMAND_COUNT; ++i) {
-    if (caseInsensitiveEquals(name, commandTable[i].name)) {
+    if (platform::str::iequals(name, commandTable[i].name)) {
       out.cmd = commandTable[i].cmd;
       break;
     }
