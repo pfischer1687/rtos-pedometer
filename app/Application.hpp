@@ -104,7 +104,7 @@ public:
    * @brief Constructor.
    * @param imu IMU driver.
    */
-  explicit Application(imu::Mpu6050Driver &imu) noexcept : _imu(imu) {}
+  explicit Application(imu::Mpu6050Driver &imu) noexcept;
 
   ~Application() = default;
   Application(const Application &) = delete;
@@ -133,7 +133,7 @@ private:
    * @brief Configuration constants.
    */
   struct Config {
-    static constexpr uint32_t MAIL_DEPTH = 16u;
+    static constexpr uint32_t MAIL_DEPTH = 32u;
 
     static constexpr uint32_t EVENT_IMU_DATA_READY = 1u << 0;
     static constexpr uint32_t EVENT_LED_UPDATE = 1u << 1;
@@ -152,7 +152,7 @@ private:
    * @brief Thread stack type.
    */
   template <std::size_t N> struct alignas(std::max_align_t) ThreadStack {
-    std::byte data[N]{};
+    unsigned char data[N]{};
   };
 
   /**
@@ -162,9 +162,8 @@ private:
 
   /**
    * @brief Try to acquire and send IMU sample.
-   * @return True if sample was acquired and sent, false otherwise.
    */
-  bool tryAcquireAndSendImuSample() noexcept;
+  void tryAcquireAndSendImuSample() noexcept;
 
   /**
    * @brief IMU data acquisition thread.
@@ -210,7 +209,6 @@ private:
   // Single-writer (IMU thread only), lock-free ring buffer for IMU events.
   ImuEvent _imuEventLog[Config::IMU_EVENT_LOG_SIZE]{};
   std::atomic<uint32_t> _imuEventWriteIdx{0};
-  std::atomic<uint32_t> _imuEventLostCount{0};
 
   ThreadStack<Config::IMU_THREAD_STACK_DEPTH> _stackImu{};
   ThreadStack<Config::SIGNAL_THREAD_STACK_DEPTH> _stackSignal{};

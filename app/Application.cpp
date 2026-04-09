@@ -28,10 +28,11 @@ namespace app {
 
 namespace {
 
-constexpr std::chrono::milliseconds kSessionPollInterval = 25ms;
+constexpr std::chrono::milliseconds SESSION_POLL_INTERVAL = 25ms;
 
-constexpr std::size_t kMaxReadRetryAttempts = 2u;
-constexpr std::chrono::milliseconds kReadRetryBackoff = 1ms;
+constexpr std::size_t MAX_READ_RETRY_ATTEMPTS = 2u;
+constexpr std::chrono::milliseconds READ_RETRY_BACKOFF = 1ms;
+constexpr std::chrono::milliseconds THREAD_SLEEP_INTERVAL = 1ms;
 
 /**
  * @brief First token of trimmed line equals cmd (ASCII case-insensitive).
@@ -46,64 +47,61 @@ bool commandEquals(std::string_view line, std::string_view cmd) noexcept {
 
 Application::Application(imu::Mpu6050Driver &imu) noexcept
     : _imu(imu), _isrToSensorFlags("imu_isr"), _sessionToLedFlags("led_evt"),
-      _imuThread(osPriorityRealtime, kStackImu, _stackImu.data, "imu_acq"),
-      _signalThread(osPriorityHigh, kStackSignal, _stackSignal.data,
-                    "sig_proc"),
-      _stepThread(osPriorityAboveNormal, kStackStep, _stackStep.data,
-                  "step_det"),
-      _sessionThread(osPriorityBelowNormal, kStackSession, _stackSession.data,
-                     "session"),
-      _usbThread(osPriorityLow, kStackUsb, _stackUsb.data, "usb_cmd"),
-      _ledThread(static_cast<osPriority>(2u), kStackLed, _stackLed.data,
-                 "led_mgr") {}
+      _imuThread(osPriorityRealtime, Config::IMU_THREAD_STACK_DEPTH,
+                 _stackImu.data, "imu_acq"),
+      _signalThread(osPriorityHigh, Config::SIGNAL_THREAD_STACK_DEPTH,
+                    _stackSignal.data, "sig_proc"),
+      _stepThread(osPriorityAboveNormal, Config::STEP_THREAD_STACK_DEPTH,
+                  _stackStep.data, "step_det"),
+      _sessionThread(osPriorityBelowNormal, Config::SESSION_THREAD_STACK_DEPTH,
+                     _stackSession.data, "session"),
+      _usbThread(osPriorityLow, Config::USB_THREAD_STACK_DEPTH, _stackUsb.data,
+                 "usb_cmd"),
+      _ledThread(static_cast<osPriority>(2u), Config::LED_THREAD_STACK_DEPTH,
+                 _stackLed.data, "led_mgr") {}
 
 void Application::logImuEvent(ImuEventType type, platform::Result result,
                               uint32_t timestampUs) noexcept {
-
-  if (_imuEventWriteIdx.load() >= Config::IMU_EVENT_LOG_SIZE) {
-    _imuEventLostCount.fetch_add(1, std::memory_order_relaxed);
-  }
-  const uint32_t idx =
-      _imuEventWriteIdx.fetch_add(1, std::memory_order_relaxed) %
-      Config::IMU_EVENT_LOG_SIZE;
+  const uint32_t writeIdx =
+      _imuEventWriteIdx.fetch_add(1, std::memory_order_relaxed);
+  const uint32_t idx = writeIdx % Config::IMU_EVENT_LOG_SIZE;
 
   _imuEventLog[idx] =
       ImuEvent{.timestampUs = timestampUs, .type = type, .result = result};
 }
 
-bool Application::tryAcquireAndSendImuSample() noexcept {
+void Application::tryAcquireAndSendImuSample() noexcept {
   MailHandle<RawImuDataFrame, Config::MAIL_DEPTH> mailHandle{
       _sensorToSignalMail};
   if (!mailHandle) [[unlikely]] {
     _imuDropCount.fetch_add(1, std::memory_order_relaxed);
-    logImuEvent(ImuEventType::MailAllocFail, platform::Result::Busy, 0);
-    return false;
+    logImuEvent(ImuEventType::MailAllocFail, platform::Result::Busy, platform::getTimeUs());
+    return;
   }
 
   imu::ImuSample sample{};
   platform::Result sampleResult{};
 
-  for (std::size_t attempt = 0; attempt < kMaxReadRetryAttempts; ++attempt) {
+  for (std::size_t attempt = 0; attempt < MAX_READ_RETRY_ATTEMPTS; ++attempt) {
     sampleResult = _imu.readSample(sample);
     if (platform::isOk(sampleResult)) {
       break;
     }
-    rtos::ThisThread::sleep_for(kReadRetryBackoff);
+    rtos::ThisThread::sleep_for(READ_RETRY_BACKOFF);
   }
 
   if (!platform::isOk(sampleResult)) [[unlikely]] {
     if (sampleResult == platform::Result::DataNotReady) {
-      return false;
+      return;
     }
 
     _imuDropCount.fetch_add(1, std::memory_order_relaxed);
     logImuEvent(ImuEventType::ReadFail, sampleResult, sample.timestampUs);
-
-    return false;
+    return;
   }
 
   RawImuDataFrame *msg = mailHandle.getMsg();
-  msg->sequence = _imuSeq.fetch_add(1, std::memory_order_acq_rel);
+  msg->sequence = _imuSeq.fetch_add(1, std::memory_order_relaxed);
   const auto &[ax, ay, az] = sample.accel;
   msg->accelX = ax;
   msg->accelY = ay;
@@ -111,20 +109,25 @@ bool Application::tryAcquireAndSendImuSample() noexcept {
   msg->timestampUs = sample.timestampUs;
 
   _sensorToSignalMail.put(mailHandle.releaseMsg());
-  return true;
 }
 
 void Application::imuDataAcquisitionThread() {
   while (true) {
-    const uint32_t flags =
-        _isrToSensorFlags.wait_any(kEventImuDataReady, osWaitForever, true);
+    const uint32_t flags = _isrToSensorFlags.wait_any(
+        Config::EVENT_IMU_DATA_READY, osWaitForever, true);
 
     if ((flags & osFlagsError) != 0u) {
-      _imuThreadErrorCount.fetch_add(1, std::memory_order_relaxed);
+      platform::Result res = platform::Result::Error;
+      if ((flags & osFlagsErrorTimeout) != 0u) {
+        res = platform::Result::Timeout;
+      }
+
+      logImuEvent(ImuEventType::Timeout, res, platform::getTimeUs());
+      rtos::ThisThread::sleep_for(THREAD_SLEEP_INTERVAL);
       continue;
     }
 
-    (void)tryAcquireAndSendImuSample();
+    tryAcquireAndSendImuSample();
   }
 }
 
@@ -136,8 +139,10 @@ void Application::imuDataProcessingThread() {
       continue;
     }
 
-    MailHandle<RawImuDataFrame, kMailDepth> in{_sensorToSignalMail, rawIn};
-    MailHandle<ProcessedImuDataFrame, kMailDepth> out{_signalToStepMail};
+    MailHandle<RawImuDataFrame, Config::MAIL_DEPTH> in{_sensorToSignalMail,
+                                                       rawIn};
+    MailHandle<ProcessedImuDataFrame, Config::MAIL_DEPTH> out{
+        _signalToStepMail};
     if (!out) [[unlikely]] {
       _signalDropCount.fetch_add(1, std::memory_order_relaxed);
       continue;
@@ -147,6 +152,8 @@ void Application::imuDataProcessingThread() {
     RawImuDataFrame *inMsg = in.getMsg();
     outMsg->sequence = inMsg->sequence;
     outMsg->sourceTimestampUs = inMsg->timestampUs;
+
+    // TODO: calculate accel magnitude milliG.
     outMsg->accelMagnitudeMilliG = static_cast<int32_t>(inMsg->sequence * 1000);
 
     _signalToStepMail.put(out.releaseMsg());
@@ -161,8 +168,9 @@ void Application::stepDetectionThread() {
       continue;
     }
 
-    MailHandle<ProcessedImuDataFrame, kMailDepth> in{_signalToStepMail, rawIn};
-    MailHandle<StepDetectionEvent, kMailDepth> out{_stepToSessionMail};
+    MailHandle<ProcessedImuDataFrame, Config::MAIL_DEPTH> in{_signalToStepMail,
+                                                             rawIn};
+    MailHandle<StepDetectionEvent, Config::MAIL_DEPTH> out{_stepToSessionMail};
     if (!out) [[unlikely]] {
       _stepDropCount.fetch_add(1, std::memory_order_relaxed);
       continue;
@@ -172,6 +180,8 @@ void Application::stepDetectionThread() {
     ProcessedImuDataFrame *inMsg = in.getMsg();
     outMsg->sequence = inMsg->sequence;
     outMsg->peakTimeUs = inMsg->sourceTimestampUs;
+
+    // TODO: calculate step confidence.
     outMsg->confidence = static_cast<uint8_t>(inMsg->sequence & 0xFFu);
 
     _stepToSessionMail.put(out.releaseMsg());
@@ -183,18 +193,18 @@ void Application::sessionManagerThread() {
 
   while (true) {
     StepDetectionEvent *in =
-        _stepToSessionMail.try_get_for(kSessionPollInterval);
+        _stepToSessionMail.try_get_for(SESSION_POLL_INTERVAL);
 
-    UsbCommand *usbLine = nullptr;
-    while ((usbLine = _usbToSessionMail.try_get()) != nullptr) {
+    UsbCommand *usbLine;
+    while ((usbLine = _usbToSessionMail.try_get())) {
       const std::string_view trimmed = platform::str::trim(usbLine->line);
       if (commandEquals(trimmed, "PING")) {
-        // Placeholder: future session commands parsed here.
+        // TODO: parse session commands here.
       }
       _usbToSessionMail.free(usbLine);
     }
 
-    if (in == nullptr) {
+    if (!in) {
       continue;
     }
 
@@ -207,7 +217,7 @@ void Application::sessionManagerThread() {
     (void)in->confidence;
 
     _ledState.store(1, std::memory_order_relaxed);
-    _sessionToLedFlags.set(kEventLedUpdate);
+    _sessionToLedFlags.set(Config::EVENT_LED_UPDATE);
     _stepToSessionMail.free(in);
   }
 }
@@ -228,10 +238,9 @@ void Application::usbCommandThread() {
 
   char lineBuf[usb::USB_CMD_MAX_LEN];
 
-  for (;;) {
+  while (true) {
     if (!iface.poll(lineBuf, sizeof(lineBuf))) {
-      // Short sleep when idle: USB stack is polled, not interrupt-driven here.
-      rtos::ThisThread::sleep_for(10ms);
+      rtos::ThisThread::sleep_for(THREAD_SLEEP_INTERVAL);
       continue;
     }
 
@@ -251,7 +260,7 @@ void Application::usbCommandThread() {
     }
 
     UsbCommand *mail = _usbToSessionMail.try_alloc();
-    if (mail != nullptr) {
+    if (mail) {
       std::memset(mail->line, 0, sizeof(mail->line));
       const size_t copyLen = (trimmed.size() < (sizeof(mail->line) - 1u))
                                  ? trimmed.size()
@@ -291,14 +300,17 @@ void Application::usbCommandThread() {
 
       iface.sendResponse(buf);
 
-      // Dump event log
-      const uint32_t count = (_imuEventWriteIdx.load() < IMU_EVENT_LOG_SIZE)
-                                 ? _imuEventWriteIdx.load()
-                                 : IMU_EVENT_LOG_SIZE;
+      const uint32_t write = _imuEventWriteIdx.load(std::memory_order_acquire);
+      const uint32_t count = (write < Config::IMU_EVENT_LOG_SIZE)
+                                 ? write
+                                 : Config::IMU_EVENT_LOG_SIZE;
 
       for (uint32_t i = 0; i < count; ++i) {
-        const ImuEvent &e = _imuEventLog[i];
+        // Calculating index to write them in chronological order based on ring
+        // buffer.
+        const uint32_t idx = (write - count + i) % Config::IMU_EVENT_LOG_SIZE;
 
+        const ImuEvent e = _imuEventLog[idx];
         std::snprintf(buf, sizeof(buf), "E t=%lu type=%u res=%u",
                       (unsigned long)e.timestampUs,
                       static_cast<unsigned>(e.type),
@@ -323,19 +335,19 @@ void Application::usbCommandThread() {
 void Application::ledManagerThread() {
   for (;;) {
     const uint32_t w = _sessionToLedFlags.wait_any_for(
-        kEventLedUpdate, rtos::Kernel::wait_for_u32_forever, true);
+        Config::EVENT_LED_UPDATE, rtos::Kernel::wait_for_u32_forever, true);
     if ((w & osFlagsError) != 0u) {
       continue;
     }
     (void)w;
     uint8_t state = _ledState.load(std::memory_order_relaxed);
-    (void)state; // placeholder for future LED behavior
-    // Placeholder: drive board LEDs via a future hal::ILed when wired.
+    (void)state;
+    // TODO: drive board LEDs via a future hal::ILed when wired.
   }
 }
 
 void Application::signalSensorAcquisitionFromIsr() noexcept {
-  (void)_isrToSensorFlags.set(kEventImuDataReady);
+  (void)_isrToSensorFlags.set(Config::EVENT_IMU_DATA_READY);
 }
 
 void Application::startThreads() noexcept {
@@ -358,7 +370,7 @@ void Application::startThreads() noexcept {
 [[noreturn]] void Application::run() noexcept {
   startThreads();
 
-  for (;;) {
+  while (true) {
     rtos::ThisThread::sleep_for(rtos::Kernel::wait_for_u32_forever);
   }
 }

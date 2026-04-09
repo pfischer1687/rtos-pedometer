@@ -114,6 +114,12 @@ public:
 ITimer &timer() noexcept;
 
 /**
+ * @brief Get current monotonic timestamp in microseconds.
+ * @return Monotonic timestamp in us.
+ */
+inline TickUs getTimeUs() noexcept { return timer().nowUs(); }
+
+/**
  * @brief Get the watchdog.
  * @return Watchdog.
  */
