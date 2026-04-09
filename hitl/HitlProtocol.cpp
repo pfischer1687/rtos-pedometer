@@ -1,23 +1,42 @@
 /**
- * @file entry/HITLProtocol.cpp
- * @brief HITL (Hardware In The Loop) protocol dispatch implementation.
+ * @file hitl/HitlProtocol.cpp
+ * @brief HITL command mapping and dispatch.
  */
 
-#include "entry/HITLProtocol.hpp"
+#include "hitl/HitlProtocol.hpp"
 #include "platform/Platform.hpp"
 #include "platform/StringUtils.hpp"
+
 #include <cstddef>
 #include <cstdio>
 #include <limits>
 #include <optional>
 #include <string_view>
 
-namespace entry {
+namespace hitl {
 
 namespace {
 
 constexpr platform::TickUs READ_SAMPLE_TIMEOUT_US = 500'000u; // 500 ms
 constexpr unsigned int READ_POLL_DELAY_MS = 1u;
+
+struct HitlCommandEntry {
+  std::string_view name;
+  HitlCommandId id;
+};
+
+constexpr HitlCommandEntry hitlCommandTable[] = {
+    {"PING", HitlCommandId::Ping},
+    {"INIT", HitlCommandId::Init},
+    {"CONFIGURE", HitlCommandId::Config},
+    {"START", HitlCommandId::Start},
+    {"STOP", HitlCommandId::Stop},
+    {"READ_N_BYTES", HitlCommandId::ReadNBytes},
+    {"RESET", HitlCommandId::Reset},
+};
+
+constexpr std::size_t HITL_COMMAND_COUNT =
+    sizeof(hitlCommandTable) / sizeof(hitlCommandTable[0]);
 
 } // anonymous namespace
 
@@ -46,51 +65,58 @@ std::optional<std::uint16_t> parseInt(std::string_view s) noexcept {
   return n;
 }
 
-void dispatchHITLCommand(usb::UsbInterface &usbInterface,
-                         imu::Mpu6050Driver &imu,
-                         const usb::ParsedCommand &parsed) {
+std::optional<HitlCommandId>
+mapCommandId(const usb::ParsedLine &line) noexcept {
+  if (line.name.empty())
+    return std::nullopt;
 
-  if (parsed.id == usb::CommandId::None) {
-    usbInterface.sendResponse("UNKNOWN_COMMAND");
-    return;
+  for (std::size_t i = 0; i < HITL_COMMAND_COUNT; ++i) {
+    if (platform::str::iequals(line.name, hitlCommandTable[i].name)) {
+      return hitlCommandTable[i].id;
+    }
   }
+  return std::nullopt;
+}
 
-  switch (parsed.id) {
-  case usb::CommandId::Ping:
+void dispatchCommand(usb::UsbInterface &usbInterface, imu::Mpu6050Driver &imu,
+                     HitlCommandId id, const usb::ParsedLine &line) noexcept {
+
+  switch (id) {
+  case HitlCommandId::Ping:
     usbInterface.sendResponse("PONG");
     break;
-  case usb::CommandId::Init: {
+  case HitlCommandId::Init: {
     const platform::Result r = imu.init();
     usbInterface.sendResponse(platform::isOk(r) ? "IMU_INIT_OK"
                                                 : "IMU_INIT_FAIL");
     break;
   }
-  case usb::CommandId::Configure: {
+  case HitlCommandId::Config: {
     const imu::ImuConfig config{};
     const platform::Result r = imu.configure(config);
     usbInterface.sendResponse(platform::isOk(r) ? "IMU_CONFIG_OK"
                                                 : "IMU_CONFIG_FAIL");
     break;
   }
-  case usb::CommandId::Start: {
+  case HitlCommandId::Start: {
     const platform::Result r = imu.startSampling();
     usbInterface.sendResponse(platform::isOk(r) ? "IMU_START_OK"
                                                 : "IMU_START_FAIL");
     break;
   }
-  case usb::CommandId::Stop: {
+  case HitlCommandId::Stop: {
     const platform::Result r = imu.stopSampling();
     usbInterface.sendResponse(platform::isOk(r) ? "IMU_STOP_OK"
                                                 : "IMU_STOP_FAIL");
     break;
   }
-  case usb::CommandId::ReadNBytes: {
-    if (parsed.argCount < 1u) {
+  case HitlCommandId::ReadNBytes: {
+    if (line.argCount < 1u) {
       usbInterface.sendResponse("INVALID_ARGUMENT");
       return;
     }
 
-    const std::optional<std::uint16_t> nBytes = parseInt(parsed.args[0]);
+    const std::optional<std::uint16_t> nBytes = parseInt(line.args[0]);
     if (!nBytes.has_value() || nBytes.value() == 0u) {
       usbInterface.sendResponse("INVALID_ARGUMENT");
       return;
@@ -142,16 +168,13 @@ void dispatchHITLCommand(usb::UsbInterface &usbInterface,
     usbInterface.sendResponse("READ_DONE");
     break;
   }
-  case usb::CommandId::Reset: {
+  case HitlCommandId::Reset: {
     const platform::Result r = imu.reset();
     usbInterface.sendResponse(platform::isOk(r) ? "IMU_RESET_OK"
                                                 : "IMU_RESET_FAIL");
     break;
   }
-  default:
-    usbInterface.sendResponse("UNKNOWN_COMMAND");
-    break;
   }
 }
 
-} // namespace entry
+} // namespace hitl

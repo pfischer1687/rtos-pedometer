@@ -4,6 +4,7 @@
  */
 
 #include "usb/UsbInterface.hpp"
+#include "platform/StringUtils.hpp"
 #include "session/SessionManager.hpp"
 #include <cstdio>
 #include <cstring>
@@ -16,6 +17,30 @@ namespace {
 constexpr std::size_t MAX_BYTES_PER_POLL = 32;
 
 } // anonymous namespace
+
+ParsedLine parseLine(std::string_view line) noexcept {
+  ParsedLine out{};
+
+  std::string_view rest = platform::str::trim(line);
+  if (rest.empty())
+    return out;
+
+  const std::string_view name = platform::str::nextToken(rest);
+  out.name = name;
+  if (name.empty())
+    return out;
+
+  for (std::size_t i = 0; i < out.args.size(); ++i) {
+    const std::string_view arg = platform::str::nextToken(rest);
+    if (arg.empty())
+      break;
+
+    out.args[i] = arg;
+    out.argCount = i + 1u;
+  }
+
+  return out;
+}
 
 UsbInterface::UsbInterface(IUsbTransport &transport) noexcept
     : _transport(transport) {}

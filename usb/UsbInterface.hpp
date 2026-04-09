@@ -7,8 +7,10 @@
 #define USB_USBINTERFACE_HPP
 
 #include "usb/IUsbTransport.hpp"
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 
 /**
  * @namespace session
@@ -21,10 +23,23 @@ enum class SessionState : uint8_t;
 
 namespace usb {
 
+struct ParsedLine {
+  std::string_view name;
+  std::array<std::string_view, 4> args{};
+  std::size_t argCount = 0u;
+};
+
 /**
  * @brief Maximum length of one command line (bytes).
  */
 inline constexpr size_t USB_CMD_MAX_LEN = 64;
+
+/**
+ * @brief Parse a line into a ParsedLine.
+ * @param line The line to parse.
+ * @return The parsed line.
+ */
+[[nodiscard]] ParsedLine parseLine(std::string_view line) noexcept;
 
 /**
  * @class UsbInterface

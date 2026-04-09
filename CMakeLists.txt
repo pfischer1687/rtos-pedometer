@@ -18,9 +18,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-option(TEST_ENTRY "Use test entry (TestEntry.cpp) instead of production (ProductionEntry.cpp)" OFF)
+option(TEST_ENTRY "Use test entry (HITLEntry.cpp) instead of production (ProductionEntry.cpp)" OFF)
 if(TEST_ENTRY)
-  set(ENV_SOURCES entry/TestEntry.cpp entry/HITLProtocol.cpp)
+  set(ENV_SOURCES entry/HITLEntry.cpp hitl/HitlProtocol.cpp)
 else()
   set(ENV_SOURCES entry/ProductionEntry.cpp)
 endif()
@@ -28,6 +28,7 @@ endif()
 set(APP_SOURCES
     main.cpp
     app/Application.cpp
+    app/Command.cpp
     platform/Platform.cpp
     platform/Gpio.cpp
     platform/I2CProvider.cpp
@@ -35,14 +36,13 @@ set(APP_SOURCES
     signal_processing/SignalProcessing.cpp
     step_detection/StepDetector.cpp
     session/SessionManager.cpp
-    usb/Command.cpp
     usb/UsbInterface.cpp
     usb/UsbTransport.cpp
     led/RecordingLed.cpp
 )
 add_executable(${PROJECT_NAME} ${APP_SOURCES} ${ENV_SOURCES})
 
-target_include_directories(${PROJECT_NAME} PRIVATE
+set(APP_INCLUDE_DIRS
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/app
     ${CMAKE_CURRENT_SOURCE_DIR}/entry
@@ -53,6 +53,16 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/session
     ${CMAKE_CURRENT_SOURCE_DIR}/usb
     ${CMAKE_CURRENT_SOURCE_DIR}/led
+)
+
+if(TEST_ENTRY)
+    list(APPEND APP_INCLUDE_DIRS
+        ${CMAKE_CURRENT_SOURCE_DIR}/hitl
+    )
+endif()
+
+target_include_directories(${PROJECT_NAME} PRIVATE
+    ${APP_INCLUDE_DIRS}
 )
 
 target_link_libraries(${PROJECT_NAME} mbed-os)

@@ -1,0 +1,42 @@
+/**
+ * @file app/Command.cpp
+ * @brief Implementation of USB command parsing.
+ */
+
+#include "app/Command.hpp"
+#include "platform/StringUtils.hpp"
+
+namespace app {
+
+namespace {
+
+struct CommandEntry {
+  std::string_view name;
+  CommandId id;
+};
+
+constexpr CommandEntry commandTable[] = {
+    {"START", CommandId::Start},
+    {"STOP", CommandId::Stop},
+    {"STATUS", CommandId::Status},
+    {"RESET", CommandId::Reset},
+};
+
+constexpr std::size_t COMMAND_COUNT =
+    sizeof(commandTable) / sizeof(commandTable[0]);
+
+} // anonymous namespace
+
+Command CommandParser::parse(const usb::ParsedLine &line) noexcept {
+  if (line.name.empty())
+    return Command{};
+
+  for (std::size_t i = 0; i < COMMAND_COUNT; ++i) {
+    if (platform::str::iequals(line.name, commandTable[i].name)) {
+      return Command{.id = commandTable[i].id};
+    }
+  }
+  return Command{};
+}
+
+} // namespace app

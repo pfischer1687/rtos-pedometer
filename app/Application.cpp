@@ -9,13 +9,11 @@
 #include "mbed_assert.h"
 #include "platform/Callback.h"
 #include "platform/Platform.hpp"
-#include "platform/StringUtils.hpp"
 #include "rtos/EventFlags.h"
 #include "rtos/Kernel.h"
 #include "rtos/Mail.h"
 #include "rtos/ThisThread.h"
 #include "rtos/Thread.h"
-#include "usb/Command.hpp"
 #include "usb/UsbInterface.hpp"
 #include "usb/UsbTransport.hpp"
 
@@ -202,23 +200,25 @@ void Application::sessionManagerThread() {
     StepDetectionEvent *in =
         _stepToSessionMail.try_get_for(SESSION_POLL_INTERVAL);
 
-    UsbCommand *usbCmd;
-    while ((usbCmd = _usbToSessionMail.try_get())) {
-      const usb::ParsedCommand &parsed = usbCmd->parsed;
+    Command *appCmd;
+    while ((appCmd = _usbToSessionMail.try_get())) {
+      if (!appCmd->id.has_value()) {
+        enqueueUsbResponse("UNKNOWN_COMMAND");
+        _usbToSessionMail.free(appCmd);
+        continue;
+      }
+
       // TODO: handle session commands here.
-      switch (parsed.id) {
-      case usb::CommandId::Ping:
-        enqueueUsbResponse("PONG");
-        break;
-      case usb::CommandId::Start:
+      switch (*appCmd->id) {
+      case CommandId::Start:
         sessionRecording = true;
         enqueueUsbResponse("OK");
         break;
-      case usb::CommandId::Stop:
+      case CommandId::Stop:
         sessionRecording = false;
         enqueueUsbResponse("OK");
         break;
-      case usb::CommandId::Status: {
+      case CommandId::Status: {
         char buf[sizeof(UsbResponse::msg)];
         const int n = std::snprintf(
             buf, sizeof(buf), "DROP sensor=%lu signal=%lu step=%lu usb=%lu",
@@ -236,7 +236,7 @@ void Application::sessionManagerThread() {
         }
         break;
       }
-      case usb::CommandId::Reset:
+      case CommandId::Reset:
         _imuDropCount.store(0, std::memory_order_relaxed);
         _imuSeq.store(0, std::memory_order_relaxed);
         _imuEventWriteIdx.store(0, std::memory_order_relaxed);
@@ -244,16 +244,9 @@ void Application::sessionManagerThread() {
         sessionRecording = false;
         enqueueUsbResponse("OK");
         break;
-      case usb::CommandId::None:
-      case usb::CommandId::Configure:
-      case usb::CommandId::Init:
-      case usb::CommandId::ReadNBytes:
-      default:
-        enqueueUsbResponse("UNKNOWN_COMMAND");
-        break;
       }
 
-      _usbToSessionMail.free(usbCmd);
+      _usbToSessionMail.free(appCmd);
     }
 
     if (!in) {
@@ -302,16 +295,11 @@ void Application::usbCommandThread() {
       continue;
     }
 
-    const std::string_view trimmed = platform::str::trim(lineBuf);
+    const usb::ParsedLine pl = usb::parseLine(std::string_view(lineBuf));
 
-    UsbCommand *mail = _usbToSessionMail.try_alloc();
+    Command *mail = _usbToSessionMail.try_alloc();
     if (mail) {
-      const size_t maxCopy = sizeof(mail->inputText) - 1u;
-      const size_t copyLen =
-          trimmed.size() < maxCopy ? trimmed.size() : maxCopy;
-      std::memcpy(mail->inputText, trimmed.data(), copyLen);
-      mail->inputText[copyLen] = '\0';
-      mail->parsed = usb::parseCommand(std::string_view(mail->inputText));
+      *mail = CommandParser::parse(pl);
       _usbToSessionMail.put(mail);
     } else {
       _usbDropCount.fetch_add(1, std::memory_order_relaxed);

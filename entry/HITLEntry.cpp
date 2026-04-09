@@ -1,10 +1,10 @@
 /**
- * @file entry/TestEntry.cpp
- * @brief Minimal test implementation of firmware entry (infinite loop only).
+ * @file entry/HITLEntry.cpp
+ * @brief Implementation of HITL firmware entrypoint.
  */
 
 #include "entry/FirmwareEntry.hpp"
-#include "entry/HITLProtocol.hpp"
+#include "hitl/HitlProtocol.hpp"
 #include "imu/Mpu6050Driver.hpp"
 #include "platform/Gpio.hpp"
 #include "platform/I2CProvider.hpp"
@@ -12,7 +12,10 @@
 #include "platform/StringUtils.hpp"
 #include "usb/UsbInterface.hpp"
 #include "usb/UsbTransport.hpp"
+
 #include <cstring>
+#include <optional>
+#include <string_view>
 
 namespace entry {
 
@@ -49,8 +52,13 @@ constexpr uint8_t I2C_ADDR_7_BIT = 0x68u;
       response[prefix_len + line_len] = '\0';
       usbInterface.sendResponse(response);
 
-      const usb::ParsedCommand parsedCmd = usb::parseCommand(trimmed);
-      dispatchHITLCommand(usbInterface, imu, parsedCmd);
+      const usb::ParsedLine pl = usb::parseLine(trimmed);
+      if (const std::optional<hitl::HitlCommandId> cmd =
+              hitl::mapCommandId(pl)) {
+        hitl::dispatchCommand(usbInterface, imu, *cmd, pl);
+      } else {
+        usbInterface.sendResponse("UNKNOWN_COMMAND");
+      }
       usbInterface.printPrompt();
     }
   }

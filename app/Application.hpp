@@ -10,8 +10,8 @@
 #include "rtos/Mail.h"
 #include "rtos/Thread.h"
 
+#include "app/Command.hpp"
 #include "imu/Mpu6050Driver.hpp"
-#include "usb/Command.hpp"
 #include "usb/UsbInterface.hpp"
 #include <atomic>
 #include <cstddef>
@@ -56,14 +56,6 @@ struct SessionNotification {
   uint32_t sequence{0};
   uint8_t state{0};
   uint32_t stepCount{0};
-};
-
-/**
- * @brief Command captured by the USB command thread.
- */
-struct UsbCommand {
-  usb::ParsedCommand parsed{};
-  char inputText[usb::USB_CMD_MAX_LEN]{};
 };
 
 /**
@@ -237,7 +229,7 @@ private:
   rtos::Mail<RawImuDataFrame, Config::MAIL_DEPTH> _sensorToSignalMail;
   rtos::Mail<ProcessedImuDataFrame, Config::MAIL_DEPTH> _signalToStepMail;
   rtos::Mail<StepDetectionEvent, Config::MAIL_DEPTH> _stepToSessionMail;
-  rtos::Mail<UsbCommand, Config::MAIL_DEPTH> _usbToSessionMail;
+  rtos::Mail<Command, Config::MAIL_DEPTH> _usbToSessionMail;
   rtos::Mail<UsbResponse, Config::MAIL_DEPTH> _sessionToUsbMail;
 
   std::atomic<uint32_t> _imuSeq{0};
