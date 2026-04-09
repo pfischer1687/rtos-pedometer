@@ -1,6 +1,6 @@
 /**
  * @file entry/HITLProtocol.cpp
- * @brief HITL (Hardware In The Loop) protocol command parsing implementation.
+ * @brief HITL (Hardware In The Loop) protocol dispatch implementation.
  */
 
 #include "entry/HITLProtocol.hpp"
@@ -15,30 +15,6 @@
 namespace entry {
 
 namespace {
-
-/**
- * @brief Command entry for the command table.
- */
-struct CommandEntry {
-  std::string_view name;
-  HITLCommand cmd;
-};
-
-/**
- * @brief HITL command table for lookup.
- */
-constexpr CommandEntry commandTable[] = {
-    {"PING", HITLCommand::PING},
-    {"INIT", HITLCommand::INIT},
-    {"CONFIGURE", HITLCommand::CONFIGURE},
-    {"START", HITLCommand::START},
-    {"STOP", HITLCommand::STOP},
-    {"READ_N_BYTES", HITLCommand::READ_N_BYTES},
-    {"RESET", HITLCommand::RESET},
-};
-
-constexpr std::size_t COMMAND_COUNT =
-    sizeof(commandTable) / sizeof(commandTable[0]);
 
 constexpr platform::TickUs READ_SAMPLE_TIMEOUT_US = 500'000u; // 500 ms
 constexpr unsigned int READ_POLL_DELAY_MS = 1u;
@@ -70,77 +46,45 @@ std::optional<std::uint16_t> parseInt(std::string_view s) noexcept {
   return n;
 }
 
-ParsedCommand parseCommand(std::string_view line) noexcept {
-  ParsedCommand out{};
-  out.cmd = std::nullopt;
-  out.argCount = 0u;
-
-  std::string_view rest = platform::str::trim(line);
-  if (rest.empty())
-    return out;
-
-  const std::string_view name = platform::str::nextToken(rest);
-  out.name = name;
-  if (name.empty())
-    return out;
-
-  for (std::size_t i = 0; i < MAX_ARGS; ++i) {
-    const std::string_view arg = platform::str::nextToken(rest);
-    if (arg.empty())
-      break;
-
-    out.args[i] = arg;
-    out.argCount = i + 1u;
-  }
-
-  for (std::size_t i = 0; i < COMMAND_COUNT; ++i) {
-    if (platform::str::iequals(name, commandTable[i].name)) {
-      out.cmd = commandTable[i].cmd;
-      break;
-    }
-  }
-
-  return out;
-}
-
 void dispatchHITLCommand(usb::UsbInterface &usbInterface,
-                         imu::Mpu6050Driver &imu, const ParsedCommand &parsed) {
+                         imu::Mpu6050Driver &imu,
+                         const usb::ParsedCommand &parsed) {
 
-  if (!parsed.cmd.has_value()) {
+  if (parsed.id == usb::CommandId::None) {
     usbInterface.sendResponse("UNKNOWN_COMMAND");
     return;
   }
 
-  switch (parsed.cmd.value()) {
-  case HITLCommand::PING:
+  switch (parsed.id) {
+  case usb::CommandId::Ping:
     usbInterface.sendResponse("PONG");
     break;
-  case HITLCommand::INIT: {
+  case usb::CommandId::Init: {
     const platform::Result r = imu.init();
     usbInterface.sendResponse(platform::isOk(r) ? "IMU_INIT_OK"
                                                 : "IMU_INIT_FAIL");
     break;
   }
-  case HITLCommand::CONFIGURE: {
+  case usb::CommandId::Configure: {
     const imu::ImuConfig config{};
     const platform::Result r = imu.configure(config);
     usbInterface.sendResponse(platform::isOk(r) ? "IMU_CONFIG_OK"
                                                 : "IMU_CONFIG_FAIL");
     break;
   }
-  case HITLCommand::START: {
+  case usb::CommandId::Start: {
     const platform::Result r = imu.startSampling();
     usbInterface.sendResponse(platform::isOk(r) ? "IMU_START_OK"
                                                 : "IMU_START_FAIL");
     break;
   }
-  case HITLCommand::STOP: {
+  case usb::CommandId::Stop: {
     const platform::Result r = imu.stopSampling();
     usbInterface.sendResponse(platform::isOk(r) ? "IMU_STOP_OK"
                                                 : "IMU_STOP_FAIL");
     break;
   }
-  case HITLCommand::READ_N_BYTES: {
+  case usb::CommandId::ReadNBytes: {
     if (parsed.argCount < 1u) {
       usbInterface.sendResponse("INVALID_ARGUMENT");
       return;
@@ -198,7 +142,7 @@ void dispatchHITLCommand(usb::UsbInterface &usbInterface,
     usbInterface.sendResponse("READ_DONE");
     break;
   }
-  case HITLCommand::RESET: {
+  case usb::CommandId::Reset: {
     const platform::Result r = imu.reset();
     usbInterface.sendResponse(platform::isOk(r) ? "IMU_RESET_OK"
                                                 : "IMU_RESET_FAIL");

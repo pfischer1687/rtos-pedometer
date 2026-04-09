@@ -35,6 +35,7 @@ set(APP_SOURCES
     signal_processing/SignalProcessing.cpp
     step_detection/StepDetector.cpp
     session/SessionManager.cpp
+    usb/Command.cpp
     usb/UsbInterface.cpp
     usb/UsbTransport.cpp
     led/RecordingLed.cpp

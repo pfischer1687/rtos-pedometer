@@ -27,31 +27,6 @@ namespace usb {
 inline constexpr size_t USB_CMD_MAX_LEN = 64;
 
 /**
- * @enum CommandId
- * @brief Parsed command for the application.
- */
-enum class CommandId : uint8_t {
-  None,
-  Start,
-  Stop,
-  Pause,
-  Resume,
-  GetStatus,
-  GetSteps,
-  SetConfig,
-  Unknown,
-};
-
-/**
- * @struct ParsedCommand
- * @brief One parsed command with optional argument.
- */
-struct ParsedCommand {
-  CommandId id = CommandId::None;
-  uint32_t arg = 0;
-};
-
-/**
  * @class UsbInterface
  * @brief USB interface: line-based command parser, response output.
  */

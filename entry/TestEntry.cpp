@@ -49,7 +49,7 @@ constexpr uint8_t I2C_ADDR_7_BIT = 0x68u;
       response[prefix_len + line_len] = '\0';
       usbInterface.sendResponse(response);
 
-      const ParsedCommand parsedCmd = parseCommand(trimmed);
+      const usb::ParsedCommand parsedCmd = usb::parseCommand(trimmed);
       dispatchHITLCommand(usbInterface, imu, parsedCmd);
       usbInterface.printPrompt();
     }

@@ -15,6 +15,7 @@
 #include "rtos/Mail.h"
 #include "rtos/ThisThread.h"
 #include "rtos/Thread.h"
+#include "usb/Command.hpp"
 #include "usb/UsbInterface.hpp"
 #include "usb/UsbTransport.hpp"
 
@@ -75,7 +76,8 @@ void Application::tryAcquireAndSendImuSample() noexcept {
       _sensorToSignalMail};
   if (!mailHandle) [[unlikely]] {
     _imuDropCount.fetch_add(1, std::memory_order_relaxed);
-    logImuEvent(ImuEventType::MailAllocFail, platform::Result::Busy, platform::getTimeUs());
+    logImuEvent(ImuEventType::MailAllocFail, platform::Result::Busy,
+                platform::getTimeUs());
     return;
   }
 
@@ -198,7 +200,8 @@ void Application::sessionManagerThread() {
     UsbCommand *usbLine;
     while ((usbLine = _usbToSessionMail.try_get())) {
       const std::string_view trimmed = platform::str::trim(usbLine->line);
-      if (commandEquals(trimmed, "PING")) {
+      const usb::ParsedCommand parsed = usb::parseCommand(trimmed);
+      if (parsed.id == usb::CommandId::Ping) {
         // TODO: parse session commands here.
       }
       _usbToSessionMail.free(usbLine);
@@ -245,6 +248,7 @@ void Application::usbCommandThread() {
     }
 
     const std::string_view trimmed = platform::str::trim(lineBuf);
+    const usb::ParsedCommand parsed = usb::parseCommand(trimmed);
 
     if (commandEquals(trimmed, "TRIGGER_IMU_ISR")) {
       signalSensorAcquisitionFromIsr();
@@ -253,7 +257,7 @@ void Application::usbCommandThread() {
       continue;
     }
 
-    if (commandEquals(trimmed, "PING")) {
+    if (parsed.id == usb::CommandId::Ping) {
       iface.sendResponse("PONG");
       iface.printPrompt();
       continue;
@@ -275,7 +279,7 @@ void Application::usbCommandThread() {
     iface.sendResponse("ACK");
     iface.printPrompt();
 
-    if (commandEquals(trimmed, "STATUS")) {
+    if (parsed.id == usb::CommandId::Status) {
       char buf[128];
       std::snprintf(buf, sizeof(buf),
                     "DROP sensor=%lu signal=%lu step=%lu usb=%lu",
