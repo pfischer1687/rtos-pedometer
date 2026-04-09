@@ -16,6 +16,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 
 namespace app {
 
@@ -63,6 +64,13 @@ struct SessionNotification {
 struct UsbCommand {
   usb::ParsedCommand parsed{};
   char inputText[usb::USB_CMD_MAX_LEN]{};
+};
+
+/**
+ * @brief Outbound text line for the USB thread (from session / workers).
+ */
+struct UsbResponse {
+  char msg[usb::USB_CMD_MAX_LEN];
 };
 
 /**
@@ -205,6 +213,11 @@ private:
   void logImuEvent(ImuEventType type, platform::Result result,
                    uint32_t timestampUs) noexcept;
 
+  /**
+   * @brief Queue a response for the USB thread (non-blocking; drops if full).
+   */
+  void enqueueUsbResponse(std::string_view text) noexcept;
+
   imu::Mpu6050Driver &_imu;
 
   // Single-writer (IMU thread only), lock-free ring buffer for IMU events.
@@ -225,6 +238,7 @@ private:
   rtos::Mail<ProcessedImuDataFrame, Config::MAIL_DEPTH> _signalToStepMail;
   rtos::Mail<StepDetectionEvent, Config::MAIL_DEPTH> _stepToSessionMail;
   rtos::Mail<UsbCommand, Config::MAIL_DEPTH> _usbToSessionMail;
+  rtos::Mail<UsbResponse, Config::MAIL_DEPTH> _sessionToUsbMail;
 
   std::atomic<uint32_t> _imuSeq{0};
   std::atomic<uint32_t> _imuDropCount{0};
