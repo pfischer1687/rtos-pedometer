@@ -11,6 +11,7 @@
 #include "rtos/Thread.h"
 
 #include "imu/Mpu6050Driver.hpp"
+#include "usb/Command.hpp"
 #include "usb/UsbInterface.hpp"
 #include <atomic>
 #include <cstddef>
@@ -60,8 +61,8 @@ struct SessionNotification {
  * @brief Command captured by the USB command thread.
  */
 struct UsbCommand {
-  uint8_t len{0};
-  char line[usb::USB_CMD_MAX_LEN];
+  usb::ParsedCommand parsed{};
+  char inputText[usb::USB_CMD_MAX_LEN]{};
 };
 
 /**

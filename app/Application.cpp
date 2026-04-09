@@ -21,7 +21,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <cstdio>
 #include <cstring>
 #include <string_view>
 
@@ -34,15 +33,6 @@ constexpr std::chrono::milliseconds SESSION_POLL_INTERVAL = 25ms;
 constexpr std::size_t MAX_READ_RETRY_ATTEMPTS = 2u;
 constexpr std::chrono::milliseconds READ_RETRY_BACKOFF = 1ms;
 constexpr std::chrono::milliseconds THREAD_SLEEP_INTERVAL = 1ms;
-
-/**
- * @brief First token of trimmed line equals cmd (ASCII case-insensitive).
- */
-bool commandEquals(std::string_view line, std::string_view cmd) noexcept {
-  std::string_view rest = platform::str::trim(line);
-  const std::string_view token = platform::str::nextToken(rest);
-  return platform::str::iequals(token, cmd);
-}
 
 } // namespace
 
@@ -197,14 +187,13 @@ void Application::sessionManagerThread() {
     StepDetectionEvent *in =
         _stepToSessionMail.try_get_for(SESSION_POLL_INTERVAL);
 
-    UsbCommand *usbLine;
-    while ((usbLine = _usbToSessionMail.try_get())) {
-      const std::string_view trimmed = platform::str::trim(usbLine->line);
-      const usb::ParsedCommand parsed = usb::parseCommand(trimmed);
+    UsbCommand *usbCmd;
+    while ((usbCmd = _usbToSessionMail.try_get())) {
+      const usb::ParsedCommand &parsed = usbCmd->parsed;
       if (parsed.id == usb::CommandId::Ping) {
-        // TODO: parse session commands here.
+        // TODO: handle session commands here.
       }
-      _usbToSessionMail.free(usbLine);
+      _usbToSessionMail.free(usbCmd);
     }
 
     if (!in) {
@@ -248,91 +237,21 @@ void Application::usbCommandThread() {
     }
 
     const std::string_view trimmed = platform::str::trim(lineBuf);
-    const usb::ParsedCommand parsed = usb::parseCommand(trimmed);
-
-    if (commandEquals(trimmed, "TRIGGER_IMU_ISR")) {
-      signalSensorAcquisitionFromIsr();
-      iface.sendResponse("ISR_SIGNAL_QUEUED");
-      iface.printPrompt();
-      continue;
-    }
-
-    if (parsed.id == usb::CommandId::Ping) {
-      iface.sendResponse("PONG");
-      iface.printPrompt();
-      continue;
-    }
 
     UsbCommand *mail = _usbToSessionMail.try_alloc();
     if (mail) {
-      std::memset(mail->line, 0, sizeof(mail->line));
-      const size_t copyLen = (trimmed.size() < (sizeof(mail->line) - 1u))
-                                 ? trimmed.size()
-                                 : (sizeof(mail->line) - 1u);
-      std::memcpy(mail->line, trimmed.data(), copyLen);
-      mail->line[copyLen] = '\0';
+      const size_t maxCopy = sizeof(mail->inputText) - 1u;
+      const size_t copyLen =
+          trimmed.size() < maxCopy ? trimmed.size() : maxCopy;
+      std::memcpy(mail->inputText, trimmed.data(), copyLen);
+      mail->inputText[copyLen] = '\0';
+      mail->parsed = usb::parseCommand(std::string_view(mail->inputText));
       _usbToSessionMail.put(mail);
     } else {
       _usbDropCount.fetch_add(1, std::memory_order_relaxed);
     }
 
-    iface.sendResponse("ACK");
     iface.printPrompt();
-
-    if (parsed.id == usb::CommandId::Status) {
-      char buf[128];
-      std::snprintf(buf, sizeof(buf),
-                    "DROP sensor=%lu signal=%lu step=%lu usb=%lu",
-                    static_cast<unsigned long>(_imuDropCount.load()),
-                    static_cast<unsigned long>(_signalDropCount.load()),
-                    static_cast<unsigned long>(_stepDropCount.load()),
-                    static_cast<unsigned long>(_usbDropCount.load()));
-      iface.sendResponse(buf);
-      iface.printPrompt();
-      continue;
-    }
-
-    if (commandEquals(trimmed, "DUMP_IMU")) {
-
-      const auto health = getImuHealthSnapshot();
-
-      char buf[128];
-      std::snprintf(buf, sizeof(buf), "IMU total=%lu drops=%lu events=%lu",
-                    (unsigned long)health.totalSamples,
-                    (unsigned long)health.dropCount,
-                    (unsigned long)health.eventCount);
-
-      iface.sendResponse(buf);
-
-      const uint32_t write = _imuEventWriteIdx.load(std::memory_order_acquire);
-      const uint32_t count = (write < Config::IMU_EVENT_LOG_SIZE)
-                                 ? write
-                                 : Config::IMU_EVENT_LOG_SIZE;
-
-      for (uint32_t i = 0; i < count; ++i) {
-        // Calculating index to write them in chronological order based on ring
-        // buffer.
-        const uint32_t idx = (write - count + i) % Config::IMU_EVENT_LOG_SIZE;
-
-        const ImuEvent e = _imuEventLog[idx];
-        std::snprintf(buf, sizeof(buf), "E t=%lu type=%u res=%u",
-                      (unsigned long)e.timestampUs,
-                      static_cast<unsigned>(e.type),
-                      static_cast<unsigned>(e.result));
-
-        iface.sendResponse(buf);
-      }
-
-      iface.printPrompt();
-      continue;
-    }
-
-    if (commandEquals(trimmed, "RESET_IMU_STATS")) {
-      _imuDropCount.store(0);
-      _imuSeq.store(0);
-      _imuEventWriteIdx.store(0);
-      iface.sendResponse("OK");
-    }
   }
 }
 
