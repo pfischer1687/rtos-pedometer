@@ -27,16 +27,16 @@ constexpr std::size_t COMMAND_COUNT =
 
 } // anonymous namespace
 
-Command CommandParser::parse(const usb::ParsedLine &line) noexcept {
+std::optional<CommandId> parseCommand(const usb::ParsedLine &line) noexcept {
   if (line.name.empty())
-    return Command{};
+    return std::nullopt;
 
   for (std::size_t i = 0; i < COMMAND_COUNT; ++i) {
     if (platform::str::iequals(line.name, commandTable[i].name)) {
-      return Command{.id = commandTable[i].id};
+      return commandTable[i].id;
     }
   }
-  return Command{};
+  return std::nullopt;
 }
 
 } // namespace app

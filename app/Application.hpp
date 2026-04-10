@@ -91,7 +91,8 @@ struct ImuEvent {
 struct ImuHealthSnapshot {
   uint32_t totalSamples{0};
   uint32_t dropCount{0};
-  uint32_t eventCount{0};
+  uint32_t totalEvents{0};
+  uint32_t bufferedEvents{0};
 };
 
 /**
@@ -117,11 +118,6 @@ public:
    * @brief Start worker threads and block forever.
    */
   [[noreturn]] void run() noexcept;
-
-  /**
-   * @brief ISR-safe: wake the IMU acquisition thread (event flags only).
-   */
-  void signalSensorAcquisitionFromIsr() noexcept;
 
   /**
    * @brief Get IMU health snapshot.
@@ -214,7 +210,7 @@ private:
 
   // Single-writer (IMU thread only), lock-free ring buffer for IMU events.
   ImuEvent _imuEventLog[Config::IMU_EVENT_LOG_SIZE]{};
-  std::atomic<uint32_t> _imuEventWriteIdx{0};
+  std::atomic<uint32_t> _imuEventCount{0};
 
   ThreadStack<Config::IMU_THREAD_STACK_DEPTH> _stackImu{};
   ThreadStack<Config::SIGNAL_THREAD_STACK_DEPTH> _stackSignal{};
@@ -223,13 +219,12 @@ private:
   ThreadStack<Config::USB_THREAD_STACK_DEPTH> _stackUsb{};
   ThreadStack<Config::LED_THREAD_STACK_DEPTH> _stackLed{};
 
-  rtos::EventFlags _isrToSensorFlags;
   rtos::EventFlags _sessionToLedFlags;
 
   rtos::Mail<RawImuDataFrame, Config::MAIL_DEPTH> _sensorToSignalMail;
   rtos::Mail<ProcessedImuDataFrame, Config::MAIL_DEPTH> _signalToStepMail;
   rtos::Mail<StepDetectionEvent, Config::MAIL_DEPTH> _stepToSessionMail;
-  rtos::Mail<Command, Config::MAIL_DEPTH> _usbToSessionMail;
+  rtos::Mail<CommandId, Config::MAIL_DEPTH> _usbToSessionMail;
   rtos::Mail<UsbResponse, Config::MAIL_DEPTH> _sessionToUsbMail;
 
   std::atomic<uint32_t> _imuSeq{0};

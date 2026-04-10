@@ -28,15 +28,13 @@ namespace app {
 namespace {
 
 constexpr std::chrono::milliseconds SESSION_POLL_INTERVAL = 25ms;
-
-constexpr std::size_t MAX_READ_RETRY_ATTEMPTS = 2u;
-constexpr std::chrono::milliseconds READ_RETRY_BACKOFF = 1ms;
 constexpr std::chrono::milliseconds THREAD_SLEEP_INTERVAL = 1ms;
+constexpr uint8_t STEP_CONF_THRESHOLD = 128u;
 
 } // namespace
 
 Application::Application(imu::Mpu6050Driver &imu) noexcept
-    : _imu(imu), _isrToSensorFlags("imu_isr"), _sessionToLedFlags("led_evt"),
+    : _imu(imu), _sessionToLedFlags("led_evt"),
       _imuThread(osPriorityRealtime, Config::IMU_THREAD_STACK_DEPTH,
                  _stackImu.data, "imu_acq"),
       _signalThread(osPriorityHigh, Config::SIGNAL_THREAD_STACK_DEPTH,
@@ -47,15 +45,13 @@ Application::Application(imu::Mpu6050Driver &imu) noexcept
                      _stackSession.data, "session"),
       _usbThread(osPriorityLow, Config::USB_THREAD_STACK_DEPTH, _stackUsb.data,
                  "usb_cmd"),
-      _ledThread(static_cast<osPriority>(2u), Config::LED_THREAD_STACK_DEPTH,
-                 _stackLed.data, "led_mgr") {}
+      _ledThread(osPriorityLow, Config::LED_THREAD_STACK_DEPTH, _stackLed.data,
+                 "led_mgr") {}
 
 void Application::logImuEvent(ImuEventType type, platform::Result result,
                               uint32_t timestampUs) noexcept {
-  const uint32_t writeIdx =
-      _imuEventWriteIdx.fetch_add(1, std::memory_order_relaxed);
-  const uint32_t idx = writeIdx % Config::IMU_EVENT_LOG_SIZE;
-
+  const uint32_t count = _imuEventCount.fetch_add(1, std::memory_order_relaxed);
+  const uint32_t idx = count % Config::IMU_EVENT_LOG_SIZE;
   _imuEventLog[idx] =
       ImuEvent{.timestampUs = timestampUs, .type = type, .result = result};
 }
@@ -71,23 +67,14 @@ void Application::tryAcquireAndSendImuSample() noexcept {
   }
 
   imu::ImuSample sample{};
-  platform::Result sampleResult{};
-
-  for (std::size_t attempt = 0; attempt < MAX_READ_RETRY_ATTEMPTS; ++attempt) {
-    sampleResult = _imu.readSample(sample);
-    if (platform::isOk(sampleResult)) {
-      break;
-    }
-    rtos::ThisThread::sleep_for(READ_RETRY_BACKOFF);
-  }
-
+  platform::Result sampleResult = _imu.readSample(sample);
   if (!platform::isOk(sampleResult)) [[unlikely]] {
     if (sampleResult == platform::Result::DataNotReady) {
       return;
     }
 
     _imuDropCount.fetch_add(1, std::memory_order_relaxed);
-    logImuEvent(ImuEventType::ReadFail, sampleResult, sample.timestampUs);
+    logImuEvent(ImuEventType::ReadFail, sampleResult, platform::getTimeUs());
     return;
   }
 
@@ -104,17 +91,7 @@ void Application::tryAcquireAndSendImuSample() noexcept {
 
 void Application::imuDataAcquisitionThread() {
   while (true) {
-    const uint32_t flags = _isrToSensorFlags.wait_any(
-        Config::EVENT_IMU_DATA_READY, osWaitForever, true);
-
-    if ((flags & osFlagsError) != 0u) {
-      platform::Result res = platform::Result::Error;
-      if ((flags & osFlagsErrorTimeout) != 0u) {
-        res = platform::Result::Timeout;
-      }
-
-      logImuEvent(ImuEventType::Timeout, res, platform::getTimeUs());
-      rtos::ThisThread::sleep_for(THREAD_SLEEP_INTERVAL);
+    if (!_imu.consumeDataReady()) {
       continue;
     }
 
@@ -200,16 +177,10 @@ void Application::sessionManagerThread() {
     StepDetectionEvent *in =
         _stepToSessionMail.try_get_for(SESSION_POLL_INTERVAL);
 
-    Command *appCmd;
+    CommandId *appCmd;
     while ((appCmd = _usbToSessionMail.try_get())) {
-      if (!appCmd->id.has_value()) {
-        enqueueUsbResponse("UNKNOWN_COMMAND");
-        _usbToSessionMail.free(appCmd);
-        continue;
-      }
-
       // TODO: handle session commands here.
-      switch (*appCmd->id) {
+      switch (*appCmd) {
       case CommandId::Start:
         sessionRecording = true;
         enqueueUsbResponse("OK");
@@ -239,7 +210,7 @@ void Application::sessionManagerThread() {
       case CommandId::Reset:
         _imuDropCount.store(0, std::memory_order_relaxed);
         _imuSeq.store(0, std::memory_order_relaxed);
-        _imuEventWriteIdx.store(0, std::memory_order_relaxed);
+        _imuEventCount.store(0, std::memory_order_relaxed);
         steps = 0u;
         sessionRecording = false;
         enqueueUsbResponse("OK");
@@ -253,7 +224,10 @@ void Application::sessionManagerThread() {
       continue;
     }
 
-    ++steps;
+    if (in->confidence >= STEP_CONF_THRESHOLD) {
+      ++steps;
+    }
+
     SessionNotification notice{};
     notice.sequence = in->sequence;
     notice.state = sessionRecording ? 1u : 0u;
@@ -268,10 +242,18 @@ void Application::sessionManagerThread() {
 }
 
 ImuHealthSnapshot Application::getImuHealthSnapshot() const noexcept {
-  return ImuHealthSnapshot{
-      .totalSamples = _imuSeq.load(std::memory_order_relaxed),
-      .dropCount = _imuDropCount.load(std::memory_order_relaxed),
-      .eventCount = _imuEventWriteIdx.load(std::memory_order_relaxed)};
+  const uint32_t seq = _imuSeq.load(std::memory_order_relaxed);
+  const uint32_t drop = _imuDropCount.load(std::memory_order_relaxed);
+  const uint32_t events = _imuEventCount.load(std::memory_order_relaxed);
+
+  const uint32_t buffered = (events < Config::IMU_EVENT_LOG_SIZE)
+                                ? events
+                                : Config::IMU_EVENT_LOG_SIZE;
+
+  return ImuHealthSnapshot{.totalSamples = seq,
+                           .dropCount = drop,
+                           .totalEvents = events,
+                           .bufferedEvents = buffered};
 }
 
 void Application::usbCommandThread() {
@@ -296,13 +278,16 @@ void Application::usbCommandThread() {
     }
 
     const usb::ParsedLine pl = usb::parseLine(std::string_view(lineBuf));
-
-    Command *mail = _usbToSessionMail.try_alloc();
-    if (mail) {
-      *mail = CommandParser::parse(pl);
-      _usbToSessionMail.put(mail);
+    if (std::optional<CommandId> cmd = parseCommand(pl)) {
+      if (CommandId *mail = _usbToSessionMail.try_alloc()) {
+        *mail = *cmd;
+        _usbToSessionMail.put(mail);
+      } else {
+        _usbDropCount.fetch_add(1, std::memory_order_relaxed);
+        iface.sendResponse("CMD_QUEUE_FULL");
+      }
     } else {
-      _usbDropCount.fetch_add(1, std::memory_order_relaxed);
+      iface.sendResponse("UNKNOWN_COMMAND");
     }
 
     iface.printPrompt();
@@ -321,10 +306,6 @@ void Application::ledManagerThread() {
     (void)state;
     // TODO: drive board LEDs via a future hal::ILed when wired.
   }
-}
-
-void Application::signalSensorAcquisitionFromIsr() noexcept {
-  (void)_isrToSensorFlags.set(Config::EVENT_IMU_DATA_READY);
 }
 
 void Application::startThreads() noexcept {

@@ -19,18 +19,13 @@ enum class CommandId {
 };
 
 /**
- * @brief Command envelope from USB thread to session thread.
+ * @brief Maps usb::ParsedLine to CommandId.
+ * @param line The line to parse.
+ * @return The parsed command id, or std::nullopt if the line is empty or
+ * contains an unknown command.
  */
-struct Command {
-  std::optional<CommandId> id{};
-};
-
-/**
- * @brief Maps usb::ParsedLine to Command.
- */
-struct CommandParser {
-  [[nodiscard]] static Command parse(const usb::ParsedLine &line) noexcept;
-};
+[[nodiscard]] std::optional<CommandId>
+parseCommand(const usb::ParsedLine &line) noexcept;
 
 } // namespace app
 
