@@ -377,6 +377,7 @@ platform::Result Mpu6050Driver::configure(const ImuConfig &config) noexcept {
     return fault(disableGyroResult);
 
   _state = DriverState::Configured;
+  _imuConfig = config;
   return platform::Result::Ok;
 }
 

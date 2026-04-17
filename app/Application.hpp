@@ -6,94 +6,19 @@
 #ifndef APP_APPLICATION_HPP
 #define APP_APPLICATION_HPP
 
+#include "app/Command.hpp"
+#include "app/MessageTypes.hpp"
+#include "imu/Mpu6050Driver.hpp"
 #include "rtos/EventFlags.h"
 #include "rtos/Mail.h"
 #include "rtos/Thread.h"
-
-#include "app/Command.hpp"
-#include "imu/Mpu6050Driver.hpp"
-#include "usb/UsbInterface.hpp"
+#include "signal_processing/SignalProcessing.hpp"
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
 
 namespace app {
-
-/**
- * @brief Raw IMU data frame as message with sequence.
- */
-struct RawImuDataFrame {
-  uint32_t sequence{0};
-  uint32_t timestampUs{0};
-  int16_t accelX{0};
-  int16_t accelY{0};
-  int16_t accelZ{0};
-};
-
-/**
- * @brief Processed IMU data frame.
- */
-struct ProcessedImuDataFrame {
-  uint32_t sequence{0};
-  uint32_t sourceTimestampUs{0};
-  int32_t accelMagnitudeMilliG{0};
-};
-
-/**
- * @brief Step detection event.
- */
-struct StepDetectionEvent {
-  uint32_t sequence{0};
-  uint32_t peakTimeUs{0};
-  uint8_t confidence{0};
-};
-
-/**
- * @brief Session / state-machine notification.
- */
-struct SessionNotification {
-  uint32_t sequence{0};
-  uint8_t state{0};
-  uint32_t stepCount{0};
-};
-
-/**
- * @brief Outbound text line for the USB thread (from session / workers).
- */
-struct UsbResponse {
-  char msg[usb::USB_CMD_MAX_LEN];
-};
-
-/**
- * @brief IMU event type.
- */
-enum class ImuEventType : uint8_t {
-  None = 0,
-  MailAllocFail,
-  ReadFail,
-  HardwareFault,
-  Timeout,
-};
-
-/**
- * @brief IMU event.
- */
-struct ImuEvent {
-  uint32_t timestampUs;
-  ImuEventType type;
-  platform::Result result;
-};
-
-/**
- * @brief IMU health snapshot.
- */
-struct ImuHealthSnapshot {
-  uint32_t totalSamples{0};
-  uint32_t dropCount{0};
-  uint32_t totalEvents{0};
-  uint32_t bufferedEvents{0};
-};
 
 /**
  * @class Application
@@ -123,7 +48,7 @@ public:
    * @brief Get IMU health snapshot.
    * @return IMU health snapshot.
    */
-  ImuHealthSnapshot getImuHealthSnapshot() const noexcept;
+  message_types::ImuHealthSnapshot getImuHealthSnapshot() const noexcept;
 
 private:
   /**
@@ -198,7 +123,7 @@ private:
    * @param result Result.
    * @param timestampUs Timestamp.
    */
-  void logImuEvent(ImuEventType type, platform::Result result,
+  void logImuEvent(message_types::ImuEventType type, platform::Result result,
                    uint32_t timestampUs) noexcept;
 
   /**
@@ -207,9 +132,10 @@ private:
   void enqueueUsbResponse(std::string_view text) noexcept;
 
   imu::Mpu6050Driver &_imu;
+  signal_processing::SignalProcessor _signalProcessor;
 
   // Single-writer (IMU thread only), lock-free ring buffer for IMU events.
-  ImuEvent _imuEventLog[Config::IMU_EVENT_LOG_SIZE]{};
+  message_types::ImuEvent _imuEventLog[Config::IMU_EVENT_LOG_SIZE]{};
   std::atomic<uint32_t> _imuEventCount{0};
 
   ThreadStack<Config::IMU_THREAD_STACK_DEPTH> _stackImu{};
@@ -221,11 +147,14 @@ private:
 
   rtos::EventFlags _sessionToLedFlags;
 
-  rtos::Mail<RawImuDataFrame, Config::MAIL_DEPTH> _sensorToSignalMail;
-  rtos::Mail<ProcessedImuDataFrame, Config::MAIL_DEPTH> _signalToStepMail;
-  rtos::Mail<StepDetectionEvent, Config::MAIL_DEPTH> _stepToSessionMail;
+  rtos::Mail<message_types::RawImuDataFrame, Config::MAIL_DEPTH>
+      _sensorToSignalMail;
+  rtos::Mail<message_types::ProcessedImuDataFrame, Config::MAIL_DEPTH>
+      _signalToStepMail;
+  rtos::Mail<message_types::StepDetectionEvent, Config::MAIL_DEPTH>
+      _stepToSessionMail;
   rtos::Mail<CommandId, Config::MAIL_DEPTH> _usbToSessionMail;
-  rtos::Mail<UsbResponse, Config::MAIL_DEPTH> _sessionToUsbMail;
+  rtos::Mail<message_types::UsbResponse, Config::MAIL_DEPTH> _sessionToUsbMail;
 
   std::atomic<uint32_t> _imuSeq{0};
   std::atomic<uint32_t> _imuDropCount{0};

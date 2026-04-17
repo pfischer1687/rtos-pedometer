@@ -19,6 +19,11 @@
 namespace imu {
 
 /**
+ * @brief Number of accelerometer axes.
+ */
+constexpr size_t NUM_ACC_AXES = 3u;
+
+/**
  * @struct ImuSample
  * @brief Raw IMU sample (device LSB units).
  * @details
@@ -27,7 +32,7 @@ namespace imu {
  * - Timestamp is captured at read time, not sample time.
  */
 struct ImuSample {
-  std::array<int16_t, 3> accel{{0, 0, 0}}; // X, Y, Z
+  std::array<int16_t, NUM_ACC_AXES> accel{{0, 0, 0}}; // X, Y, Z
   platform::TickUs timestampUs{0};
 };
 
@@ -277,6 +282,12 @@ public:
    */
   platform::Result healthCheck() noexcept;
 
+  /**
+   * @brief Get current driver configuration.
+   * @return ImuConfig.
+   */
+  ImuConfig getImuConfig() const noexcept { return _imuConfig; }
+
 private:
   /**
    * @enum Register
@@ -352,6 +363,7 @@ private:
   platform::IDataReadyInput *_dataReadyInput{nullptr};
   std::atomic<bool> _dataReadyFlag{false};
   std::atomic<platform::TickUs> _lastDataReadyTimestampUs{0};
+  ImuConfig _imuConfig;
 };
 
 } // namespace imu

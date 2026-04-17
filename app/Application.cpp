@@ -30,6 +30,7 @@ namespace {
 constexpr std::chrono::milliseconds SESSION_POLL_INTERVAL = 25ms;
 constexpr std::chrono::milliseconds THREAD_SLEEP_INTERVAL = 1ms;
 constexpr uint8_t STEP_CONF_THRESHOLD = 128u;
+constexpr float MILLI_G_PER_G = 1000.0f;
 
 } // namespace
 
@@ -46,23 +47,35 @@ Application::Application(imu::Mpu6050Driver &imu) noexcept
       _usbThread(osPriorityLow, Config::USB_THREAD_STACK_DEPTH, _stackUsb.data,
                  "usb_cmd"),
       _ledThread(osPriorityLow, Config::LED_THREAD_STACK_DEPTH, _stackLed.data,
-                 "led_mgr") {}
+                 "led_mgr") {
+  signal_processing::FilterConfig config{
+      .highPassCutoffHz =
+          signal_processing::defaults::DEFAULT_HIGH_PASS_CUTOFF_HZ,
+      .sampleRateHz = static_cast<uint16_t>(_imu.getImuConfig().odr),
+      .movingAverageWindow =
+          signal_processing::defaults::DEFAULT_MOVING_AVERAGE_WINDOW,
+      .accelScale =
+          signal_processing::getAccelScale(_imu.getImuConfig().range)};
 
-void Application::logImuEvent(ImuEventType type, platform::Result result,
+  _signalProcessor.setConfig(config);
+}
+
+void Application::logImuEvent(message_types::ImuEventType type,
+                              platform::Result result,
                               uint32_t timestampUs) noexcept {
   const uint32_t count = _imuEventCount.fetch_add(1, std::memory_order_relaxed);
   const uint32_t idx = count % Config::IMU_EVENT_LOG_SIZE;
-  _imuEventLog[idx] =
-      ImuEvent{.timestampUs = timestampUs, .type = type, .result = result};
+  _imuEventLog[idx] = message_types::ImuEvent{
+      .timestampUs = timestampUs, .type = type, .result = result};
 }
 
 void Application::tryAcquireAndSendImuSample() noexcept {
-  MailHandle<RawImuDataFrame, Config::MAIL_DEPTH> mailHandle{
+  MailHandle<message_types::RawImuDataFrame, Config::MAIL_DEPTH> mailHandle{
       _sensorToSignalMail};
   if (!mailHandle) [[unlikely]] {
     _imuDropCount.fetch_add(1, std::memory_order_relaxed);
-    logImuEvent(ImuEventType::MailAllocFail, platform::Result::Busy,
-                platform::getTimeUs());
+    logImuEvent(message_types::ImuEventType::MailAllocFail,
+                platform::Result::Busy, platform::getTimeUs());
     return;
   }
 
@@ -74,17 +87,14 @@ void Application::tryAcquireAndSendImuSample() noexcept {
     }
 
     _imuDropCount.fetch_add(1, std::memory_order_relaxed);
-    logImuEvent(ImuEventType::ReadFail, sampleResult, platform::getTimeUs());
+    logImuEvent(message_types::ImuEventType::ReadFail, sampleResult,
+                platform::getTimeUs());
     return;
   }
 
-  RawImuDataFrame *msg = mailHandle.getMsg();
+  message_types::RawImuDataFrame *msg = mailHandle.getMsg();
   msg->sequence = _imuSeq.fetch_add(1, std::memory_order_relaxed);
-  const auto &[ax, ay, az] = sample.accel;
-  msg->accelX = ax;
-  msg->accelY = ay;
-  msg->accelZ = az;
-  msg->timestampUs = sample.timestampUs;
+  msg->sample = sample;
 
   _sensorToSignalMail.put(mailHandle.releaseMsg());
 }
@@ -100,29 +110,33 @@ void Application::imuDataAcquisitionThread() {
 }
 
 void Application::imuDataProcessingThread() {
+  signal_processing::ProcessedSample processed{};
+
   while (true) {
-    RawImuDataFrame *rawIn = _sensorToSignalMail.try_get_for(
+    message_types::RawImuDataFrame *rawIn = _sensorToSignalMail.try_get_for(
         rtos::Kernel::Clock::duration_u32::max());
     if (!rawIn) {
       continue;
     }
 
-    MailHandle<RawImuDataFrame, Config::MAIL_DEPTH> in{_sensorToSignalMail,
-                                                       rawIn};
-    MailHandle<ProcessedImuDataFrame, Config::MAIL_DEPTH> out{
+    MailHandle<message_types::RawImuDataFrame, Config::MAIL_DEPTH> in{
+        _sensorToSignalMail, rawIn};
+    MailHandle<message_types::ProcessedImuDataFrame, Config::MAIL_DEPTH> out{
         _signalToStepMail};
     if (!out) [[unlikely]] {
       _signalDropCount.fetch_add(1, std::memory_order_relaxed);
       continue;
     }
 
-    ProcessedImuDataFrame *outMsg = out.getMsg();
-    RawImuDataFrame *inMsg = in.getMsg();
-    outMsg->sequence = inMsg->sequence;
-    outMsg->sourceTimestampUs = inMsg->timestampUs;
+    message_types::RawImuDataFrame *inMsg = in.getMsg();
+    message_types::ProcessedImuDataFrame *outMsg = out.getMsg();
 
-    // TODO: calculate accel magnitude milliG.
-    outMsg->accelMagnitudeMilliG = static_cast<int32_t>(inMsg->sequence * 1000);
+    _signalProcessor.processOne(inMsg->sample, processed);
+
+    outMsg->sequence = inMsg->sequence;
+    outMsg->sourceTimestampUs = inMsg->sample.timestampUs;
+    outMsg->accelMagnitudeMilliG =
+        static_cast<int32_t>(processed.magnitude * MILLI_G_PER_G);
 
     _signalToStepMail.put(out.releaseMsg());
   }
@@ -130,22 +144,23 @@ void Application::imuDataProcessingThread() {
 
 void Application::stepDetectionThread() {
   while (true) {
-    ProcessedImuDataFrame *rawIn =
+    message_types::ProcessedImuDataFrame *rawIn =
         _signalToStepMail.try_get_for(rtos::Kernel::wait_for_u32_forever);
     if (!rawIn) {
       continue;
     }
 
-    MailHandle<ProcessedImuDataFrame, Config::MAIL_DEPTH> in{_signalToStepMail,
-                                                             rawIn};
-    MailHandle<StepDetectionEvent, Config::MAIL_DEPTH> out{_stepToSessionMail};
+    MailHandle<message_types::ProcessedImuDataFrame, Config::MAIL_DEPTH> in{
+        _signalToStepMail, rawIn};
+    MailHandle<message_types::StepDetectionEvent, Config::MAIL_DEPTH> out{
+        _stepToSessionMail};
     if (!out) [[unlikely]] {
       _stepDropCount.fetch_add(1, std::memory_order_relaxed);
       continue;
     }
 
-    StepDetectionEvent *outMsg = out.getMsg();
-    ProcessedImuDataFrame *inMsg = in.getMsg();
+    message_types::StepDetectionEvent *outMsg = out.getMsg();
+    message_types::ProcessedImuDataFrame *inMsg = in.getMsg();
     outMsg->sequence = inMsg->sequence;
     outMsg->peakTimeUs = inMsg->sourceTimestampUs;
 
@@ -157,7 +172,7 @@ void Application::stepDetectionThread() {
 }
 
 void Application::enqueueUsbResponse(std::string_view text) noexcept {
-  UsbResponse *slot = _sessionToUsbMail.try_alloc();
+  message_types::UsbResponse *slot = _sessionToUsbMail.try_alloc();
   if (!slot) {
     return;
   }
@@ -174,7 +189,7 @@ void Application::sessionManagerThread() {
   bool sessionRecording = false;
 
   while (true) {
-    StepDetectionEvent *in =
+    message_types::StepDetectionEvent *in =
         _stepToSessionMail.try_get_for(SESSION_POLL_INTERVAL);
 
     CommandId *appCmd;
@@ -190,7 +205,7 @@ void Application::sessionManagerThread() {
         enqueueUsbResponse("OK");
         break;
       case CommandId::Status: {
-        char buf[sizeof(UsbResponse::msg)];
+        char buf[sizeof(message_types::UsbResponse::msg)];
         const int n = std::snprintf(
             buf, sizeof(buf), "DROP sensor=%lu signal=%lu step=%lu usb=%lu",
             static_cast<unsigned long>(
@@ -228,7 +243,7 @@ void Application::sessionManagerThread() {
       ++steps;
     }
 
-    SessionNotification notice{};
+    message_types::SessionNotification notice{};
     notice.sequence = in->sequence;
     notice.state = sessionRecording ? 1u : 0u;
     notice.stepCount = steps;
@@ -241,7 +256,8 @@ void Application::sessionManagerThread() {
   }
 }
 
-ImuHealthSnapshot Application::getImuHealthSnapshot() const noexcept {
+message_types::ImuHealthSnapshot
+Application::getImuHealthSnapshot() const noexcept {
   const uint32_t seq = _imuSeq.load(std::memory_order_relaxed);
   const uint32_t drop = _imuDropCount.load(std::memory_order_relaxed);
   const uint32_t events = _imuEventCount.load(std::memory_order_relaxed);
@@ -250,10 +266,10 @@ ImuHealthSnapshot Application::getImuHealthSnapshot() const noexcept {
                                 ? events
                                 : Config::IMU_EVENT_LOG_SIZE;
 
-  return ImuHealthSnapshot{.totalSamples = seq,
-                           .dropCount = drop,
-                           .totalEvents = events,
-                           .bufferedEvents = buffered};
+  return message_types::ImuHealthSnapshot{.totalSamples = seq,
+                                          .dropCount = drop,
+                                          .totalEvents = events,
+                                          .bufferedEvents = buffered};
 }
 
 void Application::usbCommandThread() {
@@ -266,7 +282,7 @@ void Application::usbCommandThread() {
   char lineBuf[usb::USB_CMD_MAX_LEN];
 
   while (true) {
-    UsbResponse *resp;
+    message_types::UsbResponse *resp;
     while ((resp = _sessionToUsbMail.try_get())) {
       iface.sendResponse(resp->msg);
       _sessionToUsbMail.free(resp);
