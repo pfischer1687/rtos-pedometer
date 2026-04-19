@@ -1,13 +1,14 @@
 /**
  * @file test/tests/signal_processing/SignalProcessingTests.cpp
- * @brief Unit tests for signal_processing::SignalProcessor and magnitude hook.
+ * @brief Unit tests for signal_processing::SignalProcessor and helpers.
  */
 
 #include "signal_processing/SignalProcessing.hpp"
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <gtest/gtest.h>
-#include <thread>
 #include <vector>
 
 namespace {
@@ -20,38 +21,219 @@ float referenceAlphaHp(float sampleRateHz, float cutoffHz) {
   return rc / (rc + dt);
 }
 
+float rmsAccelX(const std::vector<signal_processing::ProcessedSample> &out,
+                size_t beginIdx, size_t endIdx) {
+  double s2 = 0.0;
+  const size_t n = endIdx - beginIdx;
+  EXPECT_GT(n, 0u);
+  for (size_t i = beginIdx; i < endIdx; ++i) {
+    const float x = out[i].accelX;
+    s2 += static_cast<double>(x) * static_cast<double>(x);
+  }
+  return static_cast<float>(std::sqrt(s2 / static_cast<double>(n)));
+}
+
+imu::ImuSample makeSample(int16_t x, int16_t y, int16_t z,
+                          platform::TickUs ts = 0) {
+  imu::ImuSample s{};
+  s.accel[0] = x;
+  s.accel[1] = y;
+  s.accel[2] = z;
+  s.timestampUs = ts;
+  return s;
+}
+
 } // namespace
 
-TEST(SignalProcessingMagnitude, L2Norm) {
+// ---------------------------------------------------------------------------
+// Magnitude (stateless helper + consistency with processed axes)
+// ---------------------------------------------------------------------------
+
+TEST(SignalProcessingMagnitude, L2NormAxisAligned) {
   EXPECT_FLOAT_EQ(signal_processing::accelerationMagnitude(3.0f, 4.0f, 0.0f),
                   5.0f);
   EXPECT_FLOAT_EQ(signal_processing::accelerationMagnitude(0.0f, 0.0f, 0.0f),
                   0.0f);
 }
 
-TEST(SignalProcessingMovingAverage, ThreeTapOnMagnitude) {
+TEST(SignalProcessingMagnitude, L2NormNonAxisAligned) {
+  EXPECT_FLOAT_EQ(signal_processing::accelerationMagnitude(3.0f, 4.0f, 12.0f),
+                  13.0f);
+}
+
+TEST(SignalProcessingMagnitude, MatchesFilteredAxesWhenMovingAverageDisabled) {
   signal_processing::SignalProcessor proc;
   signal_processing::FilterConfig cfg{};
   cfg.sampleRateHz = 100;
   cfg.highPassCutoffHz = 0.0f;
-  cfg.movingAverageWindow = 3;
+  cfg.movingAverageWindow = 1;
+  cfg.accelScale = 1.0f;
   proc.setConfig(cfg);
 
-  std::vector<signal_processing::AccelSampleF> in(4);
-  for (int i = 0; i < 4; ++i) {
-    in[static_cast<size_t>(i)].x = static_cast<float>(i + 1);
-    in[static_cast<size_t>(i)].y = 0.0f;
-    in[static_cast<size_t>(i)].z = 0.0f;
+  imu::ImuSample in = makeSample(3, 4, 12);
+  signal_processing::ProcessedSample out{};
+  proc.processOne(in, out);
+
+  const float expected = signal_processing::accelerationMagnitude(
+      out.accelX, out.accelY, out.accelZ);
+  EXPECT_NEAR(out.magnitude, expected, 1.0e-5f);
+}
+
+// ---------------------------------------------------------------------------
+// Configuration (observed via outputs; no private access)
+// ---------------------------------------------------------------------------
+
+TEST(SignalProcessingConfig, HighPassBypassWhenCutoffNonPositive) {
+  signal_processing::SignalProcessor proc;
+  signal_processing::FilterConfig cfg{};
+  cfg.sampleRateHz = 100;
+  cfg.highPassCutoffHz = 0.0f;
+  cfg.movingAverageWindow = 1;
+  cfg.accelScale = 0.5f;
+  proc.setConfig(cfg);
+
+  imu::ImuSample in = makeSample(100, -200, 300);
+  signal_processing::ProcessedSample out{};
+  proc.processOne(in, out);
+
+  EXPECT_NEAR(out.accelX, 50.0f, 1.0e-4f);
+  EXPECT_NEAR(out.accelY, -100.0f, 1.0e-4f);
+  EXPECT_NEAR(out.accelZ, 150.0f, 1.0e-4f);
+}
+
+TEST(SignalProcessingConfig, SampleRateBelow2DisablesHighPass) {
+  signal_processing::SignalProcessor lowFs;
+  signal_processing::FilterConfig cfgLow{};
+  cfgLow.sampleRateHz = 1;
+  cfgLow.highPassCutoffHz = 10.0f;
+  cfgLow.movingAverageWindow = 1;
+  cfgLow.accelScale = 1.0f;
+  lowFs.setConfig(cfgLow);
+
+  signal_processing::SignalProcessor highFs;
+  signal_processing::FilterConfig cfgHigh{};
+  cfgHigh.sampleRateHz = 100;
+  cfgHigh.highPassCutoffHz = 0.0f;
+  cfgHigh.movingAverageWindow = 1;
+  cfgHigh.accelScale = 1.0f;
+  highFs.setConfig(cfgHigh);
+
+  imu::ImuSample step = makeSample(1000, 0, 0);
+  signal_processing::ProcessedSample oLow{};
+  signal_processing::ProcessedSample oHigh{};
+  lowFs.processOne(step, oLow);
+  highFs.processOne(step, oHigh);
+
+  EXPECT_NEAR(oLow.accelX, 1000.0f, 1.0e-4f);
+  EXPECT_NEAR(oHigh.accelX, 1000.0f, 1.0e-4f);
+}
+
+TEST(SignalProcessingConfig, MovingAverageWindowClampedTo64) {
+  signal_processing::FilterConfig cfg{};
+  cfg.sampleRateHz = 100;
+  cfg.highPassCutoffHz = 0.0f;
+  cfg.accelScale = 1.0f;
+
+  signal_processing::SignalProcessor w64;
+  cfg.movingAverageWindow = 64;
+  w64.setConfig(cfg);
+
+  signal_processing::SignalProcessor wLarge;
+  cfg.movingAverageWindow = 500;
+  wLarge.setConfig(cfg);
+
+  constexpr int kN = 120;
+  std::vector<imu::ImuSample> in(static_cast<size_t>(kN));
+  for (int i = 0; i < kN; ++i) {
+    in[static_cast<size_t>(i)] = makeSample(
+        static_cast<int16_t>(i % 17 - 8), static_cast<int16_t>(i % 5),
+        static_cast<int16_t>((i * 3) % 11 - 5));
   }
 
-  std::vector<signal_processing::ProcessedSample> out(4);
-  proc.processBatchAccelFloat(in.data(), out.data(), 4);
+  std::vector<signal_processing::ProcessedSample> o64(static_cast<size_t>(kN));
+  std::vector<signal_processing::ProcessedSample> oLarge(
+      static_cast<size_t>(kN));
 
-  EXPECT_FLOAT_EQ(out[0].magnitude, 1.0f);
-  EXPECT_FLOAT_EQ(out[1].magnitude, 1.5f);
-  EXPECT_FLOAT_EQ(out[2].magnitude, 2.0f);
-  EXPECT_FLOAT_EQ(out[3].magnitude, 3.0f);
+  w64.processBatch(in.data(), o64.data(), in.size());
+  wLarge.processBatch(in.data(), oLarge.data(), in.size());
+
+  for (int i = 0; i < kN; ++i) {
+    EXPECT_NEAR(o64[static_cast<size_t>(i)].magnitude,
+                oLarge[static_cast<size_t>(i)].magnitude, 1.0e-5f);
+  }
 }
+
+TEST(SignalProcessingConfig, MovingAverageWindowZeroClampsToOne) {
+  signal_processing::FilterConfig cfg{};
+  cfg.sampleRateHz = 100;
+  cfg.highPassCutoffHz = 0.0f;
+  cfg.accelScale = 1.0f;
+
+  signal_processing::SignalProcessor w0;
+  cfg.movingAverageWindow = 0;
+  w0.setConfig(cfg);
+
+  signal_processing::SignalProcessor w1;
+  cfg.movingAverageWindow = 1;
+  w1.setConfig(cfg);
+
+  std::array<imu::ImuSample, 6> in{};
+  for (size_t i = 0; i < in.size(); ++i) {
+    in[i] = makeSample(static_cast<int16_t>(10 + static_cast<int>(i)), 0, 0);
+  }
+
+  std::array<signal_processing::ProcessedSample, 6> o0{};
+  std::array<signal_processing::ProcessedSample, 6> o1{};
+  w0.processBatch(in.data(), o0.data(), in.size());
+  w1.processBatch(in.data(), o1.data(), in.size());
+
+  for (size_t i = 0; i < in.size(); ++i) {
+    EXPECT_NEAR(o0[i].magnitude, o1[i].magnitude, 1.0e-5f);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Scale
+// ---------------------------------------------------------------------------
+
+TEST(SignalProcessingScale, LsbToGWithCustomScale) {
+  signal_processing::SignalProcessor proc;
+  signal_processing::FilterConfig cfg{};
+  cfg.sampleRateHz = 100;
+  cfg.highPassCutoffHz = 0.0f;
+  cfg.movingAverageWindow = 1;
+  cfg.accelScale = 1.0f / 1000.0f;
+  proc.setConfig(cfg);
+
+  imu::ImuSample in = makeSample(1000, 0, 0);
+  signal_processing::ProcessedSample out{};
+  proc.processOne(in, out);
+
+  EXPECT_NEAR(out.accelX, 1.0f, 1.0e-5f);
+  EXPECT_NEAR(out.magnitude, 1.0f, 1.0e-5f);
+}
+
+TEST(SignalProcessingScale, PlusMinus2GScaleMatchesGetAccelScale) {
+  const float scale =
+      signal_processing::getAccelScale(imu::AccelRange::PlusMinus2G);
+  signal_processing::SignalProcessor proc;
+  signal_processing::FilterConfig cfg{};
+  cfg.sampleRateHz = 100;
+  cfg.highPassCutoffHz = 0.0f;
+  cfg.movingAverageWindow = 1;
+  cfg.accelScale = scale;
+  proc.setConfig(cfg);
+
+  imu::ImuSample in = makeSample(16384, 0, 0);
+  signal_processing::ProcessedSample out{};
+  proc.processOne(in, out);
+
+  EXPECT_NEAR(out.accelX, 1.0f, 1.0e-4f);
+}
+
+// ---------------------------------------------------------------------------
+// High-pass
+// ---------------------------------------------------------------------------
 
 TEST(SignalProcessingHighPass, StepThenHoldMatchesReferenceRecurrence) {
   const float fs = 100.0f;
@@ -62,129 +244,394 @@ TEST(SignalProcessingHighPass, StepThenHoldMatchesReferenceRecurrence) {
   signal_processing::FilterConfig cfg{};
   cfg.sampleRateHz = 100;
   cfg.highPassCutoffHz = fc;
-  cfg.lowPassCutoffHz = 0.0f;
   cfg.movingAverageWindow = 1;
+  cfg.accelScale = 1.0f;
   proc.setConfig(cfg);
 
-  signal_processing::AccelSampleF s0{0.0f, 0.0f, 0.0f, 0};
-  signal_processing::AccelSampleF s1{1.0f, 0.0f, 0.0f, 0};
+  imu::ImuSample s0 = makeSample(0, 0, 0);
+  imu::ImuSample s1 = makeSample(1, 0, 0);
   signal_processing::ProcessedSample o0{};
   signal_processing::ProcessedSample o1{};
   signal_processing::ProcessedSample o2{};
 
-  proc.processAccelFloat(s0, o0);
-  proc.processAccelFloat(s1, o1);
-  proc.processAccelFloat(s1, o2);
+  proc.processOne(s0, o0);
+  proc.processOne(s1, o1);
+  proc.processOne(s1, o2);
 
   EXPECT_NEAR(o1.accelX, alpha, 1.0e-5f);
   EXPECT_NEAR(o2.accelX, alpha * alpha, 1.0e-5f);
 }
 
-TEST(SignalProcessingHighPass, ConstantVectorDecaysTowardZero) {
+TEST(SignalProcessingHighPass, ImpulseDecaysOnFollowingZeros) {
+  signal_processing::SignalProcessor proc;
+  signal_processing::FilterConfig cfg{};
+  cfg.sampleRateHz = 100;
+  cfg.highPassCutoffHz = 5.0f;
+  cfg.movingAverageWindow = 1;
+  cfg.accelScale = 1.0f;
+  proc.setConfig(cfg);
+
+  imu::ImuSample z = makeSample(0, 0, 0);
+  imu::ImuSample spike = makeSample(2000, 0, 0);
+  signal_processing::ProcessedSample out{};
+
+  proc.processOne(z, out);
+  proc.processOne(spike, out);
+  float peak = std::fabs(out.accelX);
+  EXPECT_GT(peak, 1.0f);
+
+  float lastAbs = peak;
+  for (int i = 0; i < 50; ++i) {
+    proc.processOne(z, out);
+    const float a = std::fabs(out.accelX);
+    EXPECT_LE(a, lastAbs + 1.0e-4f);
+    lastAbs = a;
+  }
+  EXPECT_LT(std::fabs(out.accelX), 0.5f * peak);
+}
+
+TEST(SignalProcessingHighPass, ZeroInputSequenceStaysNearZero) {
+  signal_processing::SignalProcessor proc;
+  signal_processing::FilterConfig cfg{};
+  cfg.sampleRateHz = 100;
+  cfg.highPassCutoffHz = 2.0f;
+  cfg.movingAverageWindow = 1;
+  cfg.accelScale = 1.0f;
+  proc.setConfig(cfg);
+
+  imu::ImuSample z = makeSample(0, 0, 0);
+  signal_processing::ProcessedSample out{};
+  for (int i = 0; i < 200; ++i) {
+    proc.processOne(z, out);
+    EXPECT_NEAR(out.accelX, 0.0f, 1.0e-5f);
+    EXPECT_NEAR(out.accelY, 0.0f, 1.0e-5f);
+    EXPECT_NEAR(out.accelZ, 0.0f, 1.0e-5f);
+  }
+}
+
+TEST(SignalProcessingHighPass, LargeConstantOffsetDecaysTowardZero) {
   signal_processing::SignalProcessor proc;
   signal_processing::FilterConfig cfg{};
   cfg.sampleRateHz = 100;
   cfg.highPassCutoffHz = 0.8f;
-  cfg.lowPassCutoffHz = 0.0f;
   cfg.movingAverageWindow = 1;
+  cfg.accelScale = 1.0f;
   proc.setConfig(cfg);
 
-  signal_processing::AccelSampleF s{1000.0f, 0.0f, 0.0f, 0};
+  imu::ImuSample s = makeSample(1000, 0, 0);
   signal_processing::ProcessedSample out{};
   for (int i = 0; i < 600; ++i) {
-    proc.processAccelFloat(s, out);
+    proc.processOne(s, out);
   }
   EXPECT_LT(std::fabs(out.magnitude), 15.0f);
   EXPECT_LT(std::fabs(out.accelX), 15.0f);
 }
 
-TEST(SignalProcessingLowPass, AttenuatesHighFrequencySine) {
-  signal_processing::SignalProcessor proc;
-  signal_processing::FilterConfig cfg{};
-  cfg.sampleRateHz = 200;
-  cfg.highPassCutoffHz = 0.0f;
-  cfg.lowPassCutoffHz = 5.0f;
-  cfg.movingAverageWindow = 1;
-  proc.setConfig(cfg);
+TEST(SignalProcessingHighPass, FasterSampleRateChangesAlphaForStep) {
+  const float fc = 5.0f;
+  const float alpha50 = referenceAlphaHp(50.0f, fc);
+  const float alpha200 = referenceAlphaHp(200.0f, fc);
 
-  const float fs = 200.0f;
-  const float toneHz = 40.0f;
-  const int n = 800;
-  float peakIn = 0.0f;
-  float peakOut = 0.0f;
-  signal_processing::ProcessedSample out{};
+  auto runFirstStep = [&](uint16_t fs) {
+    signal_processing::SignalProcessor proc;
+    signal_processing::FilterConfig cfg{};
+    cfg.sampleRateHz = fs;
+    cfg.highPassCutoffHz = fc;
+    cfg.movingAverageWindow = 1;
+    cfg.accelScale = 1.0f;
+    proc.setConfig(cfg);
+    imu::ImuSample z = makeSample(0, 0, 0);
+    imu::ImuSample one = makeSample(1, 0, 0);
+    signal_processing::ProcessedSample o0{};
+    signal_processing::ProcessedSample o1{};
+    proc.processOne(z, o0);
+    proc.processOne(one, o1);
+    return o1.accelX;
+  };
 
-  for (int i = 0; i < n; ++i) {
-    const float t = static_cast<float>(i) / fs;
-    const float x = 1.0f * std::sin(2.0f * kPi * toneHz * t);
-    signal_processing::AccelSampleF s{x, 0.0f, 0.0f, 0};
-    proc.processAccelFloat(s, out);
-    peakIn = std::max(peakIn, std::fabs(x));
-    peakOut = std::max(peakOut, std::fabs(out.accelX));
-  }
+  const float y50 = runFirstStep(50);
+  const float y200 = runFirstStep(200);
 
-  EXPECT_GT(peakIn, 0.9f);
-  EXPECT_LT(peakOut, 0.35f * peakIn);
+  EXPECT_NEAR(y50, alpha50, 1.0e-5f);
+  EXPECT_NEAR(y200, alpha200, 1.0e-5f);
+  EXPECT_GT(std::fabs(y50 - y200), 0.01f);
 }
 
-TEST(SignalProcessingImuSample, BatchMatchesPerSample) {
+// ---------------------------------------------------------------------------
+// Moving average
+// ---------------------------------------------------------------------------
+
+TEST(SignalProcessingMovingAverage, WindowOnePassthroughMagnitude) {
   signal_processing::SignalProcessor proc;
   signal_processing::FilterConfig cfg{};
   cfg.sampleRateHz = 100;
   cfg.highPassCutoffHz = 0.0f;
-  cfg.lowPassCutoffHz = 10.0f;
   cfg.movingAverageWindow = 1;
-  cfg.accelScale = 0.001f;
+  cfg.accelScale = 1.0f;
   proc.setConfig(cfg);
 
-  std::array<imu::ImuSample, 5> in{};
-  for (size_t i = 0; i < in.size(); ++i) {
-    in[i].accel[0] = static_cast<int16_t>(100 * (static_cast<int>(i) + 1));
-    in[i].accel[1] = 0;
-    in[i].accel[2] = 0;
-    in[i].timestampUs = static_cast<uint32_t>(i * 10000u);
+  imu::ImuSample in = makeSample(0, 300, 400);
+  signal_processing::ProcessedSample out{};
+  proc.processOne(in, out);
+
+  EXPECT_NEAR(out.magnitude, 500.0f, 1.0e-4f);
+}
+
+TEST(SignalProcessingMovingAverage, ThreeTapFillAndSteady) {
+  signal_processing::SignalProcessor proc;
+  signal_processing::FilterConfig cfg{};
+  cfg.sampleRateHz = 100;
+  cfg.highPassCutoffHz = 0.0f;
+  cfg.movingAverageWindow = 3;
+  cfg.accelScale = 1.0f;
+  proc.setConfig(cfg);
+
+  std::array<imu::ImuSample, 4> in{};
+  for (int i = 0; i < 4; ++i) {
+    in[static_cast<size_t>(i)] = makeSample(static_cast<int16_t>(i + 1), 0, 0);
   }
 
-  std::array<signal_processing::ProcessedSample, 5> batchOut{};
-  std::array<signal_processing::ProcessedSample, 5> stepOut{};
+  std::array<signal_processing::ProcessedSample, 4> out{};
+  proc.processBatch(in.data(), out.data(), in.size());
 
-  proc.processBatch(in.data(), batchOut.data(), in.size());
+  EXPECT_FLOAT_EQ(out[0].magnitude, 1.0f);
+  EXPECT_FLOAT_EQ(out[1].magnitude, 1.5f);
+  EXPECT_FLOAT_EQ(out[2].magnitude, 2.0f);
+  EXPECT_FLOAT_EQ(out[3].magnitude, 3.0f);
+}
 
-  signal_processing::SignalProcessor proc2;
-  proc2.setConfig(cfg);
-  for (size_t i = 0; i < in.size(); ++i) {
-    proc2.process(in[i], stepOut[i]);
+TEST(SignalProcessingMovingAverage, CircularBufferWrapMatchesSlidingMean) {
+  signal_processing::SignalProcessor proc;
+  signal_processing::FilterConfig cfg{};
+  cfg.sampleRateHz = 100;
+  cfg.highPassCutoffHz = 0.0f;
+  cfg.movingAverageWindow = 4;
+  cfg.accelScale = 1.0f;
+  proc.setConfig(cfg);
+
+  constexpr int kTotal = 30;
+  std::vector<float> expectedMag(static_cast<size_t>(kTotal));
+  std::vector<float> actualMag(static_cast<size_t>(kTotal));
+
+  std::vector<float> mags;
+  mags.reserve(static_cast<size_t>(kTotal));
+
+  for (int i = 0; i < kTotal; ++i) {
+    imu::ImuSample s = makeSample(static_cast<int16_t>((i % 5) + 1),
+                                  static_cast<int16_t>(i % 3),
+                                  static_cast<int16_t>((i * 7) % 11));
+    signal_processing::ProcessedSample out{};
+    proc.processOne(s, out);
+
+    const float mag = signal_processing::accelerationMagnitude(
+        static_cast<float>(s.accel[0]) * cfg.accelScale,
+        static_cast<float>(s.accel[1]) * cfg.accelScale,
+        static_cast<float>(s.accel[2]) * cfg.accelScale);
+    mags.push_back(mag);
+
+    const size_t w = 4;
+    size_t start = 0;
+    if (mags.size() > w) {
+      start = mags.size() - w;
+    }
+    double sum = 0.0;
+    for (size_t j = start; j < mags.size(); ++j) {
+      sum += static_cast<double>(mags[j]);
+    }
+    expectedMag[static_cast<size_t>(i)] =
+        static_cast<float>(sum / static_cast<double>(mags.size() - start));
+    actualMag[static_cast<size_t>(i)] = out.magnitude;
   }
 
-  for (size_t i = 0; i < in.size(); ++i) {
-    EXPECT_NEAR(batchOut[i].accelX, stepOut[i].accelX, 1.0e-4f);
-    EXPECT_EQ(batchOut[i].timestampUs, stepOut[i].timestampUs);
+  for (int i = 0; i < kTotal; ++i) {
+    EXPECT_NEAR(actualMag[static_cast<size_t>(i)],
+                expectedMag[static_cast<size_t>(i)], 1.0e-4f);
   }
 }
 
-TEST(SignalProcessingThreading, SharedProcessorConcurrentCalls) {
+// ---------------------------------------------------------------------------
+// Timestamp
+// ---------------------------------------------------------------------------
+
+TEST(SignalProcessingTimestamp, PropagatesPerSample) {
   signal_processing::SignalProcessor proc;
+  signal_processing::FilterConfig cfg{};
+  cfg.sampleRateHz = 100;
+  cfg.highPassCutoffHz = 0.0f;
+  cfg.movingAverageWindow = 1;
+  cfg.accelScale = 1.0f;
+  proc.setConfig(cfg);
+
+  imu::ImuSample in = makeSample(1, 2, 3, 999888u);
+  signal_processing::ProcessedSample out{};
+  proc.processOne(in, out);
+  EXPECT_EQ(out.timestampUs, 999888u);
+}
+
+// ---------------------------------------------------------------------------
+// Reset
+// ---------------------------------------------------------------------------
+
+TEST(SignalProcessingReset, ClearsStateForSubsequentSamples) {
+  signal_processing::SignalProcessor proc;
+  signal_processing::FilterConfig cfg{};
+  cfg.sampleRateHz = 100;
+  cfg.highPassCutoffHz = 2.0f;
+  cfg.movingAverageWindow = 5;
+  cfg.accelScale = 1.0f;
+  proc.setConfig(cfg);
+
+  imu::ImuSample warm = makeSample(500, 0, 0);
+  signal_processing::ProcessedSample tmp{};
+  for (int i = 0; i < 40; ++i) {
+    proc.processOne(warm, tmp);
+  }
+
+  proc.reset();
+
+  imu::ImuSample z = makeSample(0, 0, 0);
+  imu::ImuSample one = makeSample(1, 0, 0);
+  signal_processing::ProcessedSample o0{};
+  signal_processing::ProcessedSample o1{};
+  proc.processOne(z, o0);
+  proc.processOne(one, o1);
+
+  signal_processing::SignalProcessor fresh;
+  fresh.setConfig(cfg);
+  signal_processing::ProcessedSample f0{};
+  signal_processing::ProcessedSample f1{};
+  fresh.processOne(z, f0);
+  fresh.processOne(one, f1);
+
+  EXPECT_NEAR(o0.accelX, f0.accelX, 1.0e-5f);
+  EXPECT_NEAR(o1.accelX, f1.accelX, 1.0e-5f);
+  EXPECT_NEAR(o1.magnitude, f1.magnitude, 1.0e-5f);
+}
+
+// ---------------------------------------------------------------------------
+// Batch vs single
+// ---------------------------------------------------------------------------
+
+TEST(SignalProcessingBatch, MatchesPerSampleMultiAxisAndTimestamps) {
   signal_processing::FilterConfig cfg{};
   cfg.sampleRateHz = 100;
   cfg.highPassCutoffHz = 1.0f;
-  cfg.lowPassCutoffHz = 20.0f;
-  cfg.movingAverageWindow = 4;
+  cfg.movingAverageWindow = 3;
+  cfg.accelScale = 0.002f;
+
+  std::array<imu::ImuSample, 7> in{};
+  for (size_t i = 0; i < in.size(); ++i) {
+    in[i].accel[0] = static_cast<int16_t>(50 + static_cast<int>(i) * 3);
+    in[i].accel[1] = static_cast<int16_t>(-20 + static_cast<int>(i) * 2);
+    in[i].accel[2] = static_cast<int16_t>(10 + static_cast<int>(i));
+    in[i].timestampUs =
+        static_cast<platform::TickUs>(1000u + static_cast<uint32_t>(i) * 777u);
+  }
+
+  signal_processing::SignalProcessor procBatch;
+  procBatch.setConfig(cfg);
+  std::array<signal_processing::ProcessedSample, 7> batchOut{};
+  procBatch.processBatch(in.data(), batchOut.data(), in.size());
+
+  signal_processing::SignalProcessor procStep;
+  procStep.setConfig(cfg);
+  std::array<signal_processing::ProcessedSample, 7> stepOut{};
+  for (size_t i = 0; i < in.size(); ++i) {
+    procStep.processOne(in[i], stepOut[i]);
+  }
+
+  for (size_t i = 0; i < in.size(); ++i) {
+    EXPECT_NEAR(batchOut[i].accelX, stepOut[i].accelX, 1.0e-5f);
+    EXPECT_NEAR(batchOut[i].accelY, stepOut[i].accelY, 1.0e-5f);
+    EXPECT_NEAR(batchOut[i].accelZ, stepOut[i].accelZ, 1.0e-5f);
+    EXPECT_NEAR(batchOut[i].magnitude, stepOut[i].magnitude, 1.0e-5f);
+    EXPECT_EQ(batchOut[i].timestampUs, stepOut[i].timestampUs);
+    EXPECT_EQ(batchOut[i].timestampUs, in[i].timestampUs);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Numerical stability
+// ---------------------------------------------------------------------------
+
+TEST(SignalProcessingNumerical, ExtremeInt16FiniteWithHighPassOff) {
+  signal_processing::SignalProcessor proc;
+  signal_processing::FilterConfig cfg{};
+  cfg.sampleRateHz = 100;
+  cfg.highPassCutoffHz = 0.0f;
+  cfg.movingAverageWindow = 1;
+  cfg.accelScale = 0.0001f;
   proc.setConfig(cfg);
 
-  auto worker = [&proc](int base) {
+  std::array<int16_t, 4> xs = {32767, -32768, 0, 1234};
+  for (int16_t x : xs) {
+    imu::ImuSample in = makeSample(x, x, static_cast<int16_t>(-x));
     signal_processing::ProcessedSample out{};
-    for (int i = 0; i < 500; ++i) {
-      signal_processing::AccelSampleF s{static_cast<float>(base + i % 7),
-                                        static_cast<float>(i % 5),
-                                        static_cast<float>((base * i) % 11), 0};
-      proc.processAccelFloat(s, out);
-      EXPECT_TRUE(std::isfinite(out.magnitude));
-      EXPECT_TRUE(std::isfinite(out.accelX));
+    proc.processOne(in, out);
+    EXPECT_TRUE(std::isfinite(out.accelX));
+    EXPECT_TRUE(std::isfinite(out.accelY));
+    EXPECT_TRUE(std::isfinite(out.accelZ));
+    EXPECT_TRUE(std::isfinite(out.magnitude));
+    EXPECT_FALSE(std::isnan(out.magnitude));
+  }
+}
+
+TEST(SignalProcessingNumerical, ExtremeInt16FiniteWithHighPassOn) {
+  signal_processing::SignalProcessor proc;
+  signal_processing::FilterConfig cfg{};
+  cfg.sampleRateHz = 200;
+  cfg.highPassCutoffHz = 5.0f;
+  cfg.movingAverageWindow = 8;
+  cfg.accelScale = 0.0002f;
+  proc.setConfig(cfg);
+
+  for (int i = 0; i < 400; ++i) {
+    const int16_t v = static_cast<int16_t>((i * 7919) % 65535 - 32767);
+    imu::ImuSample in = makeSample(v, static_cast<int16_t>(-v / 2),
+                                   static_cast<int16_t>(v / 3));
+    signal_processing::ProcessedSample out{};
+    proc.processOne(in, out);
+    EXPECT_TRUE(std::isfinite(out.magnitude));
+    EXPECT_TRUE(std::isfinite(out.accelX));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Frequency-domain
+// ---------------------------------------------------------------------------
+
+TEST(SignalProcessingFrequency, LowFrequencyMoreAttenuatedThanHigh) {
+  const uint16_t fs = 100;
+  const float fc = 1.0f;
+  const int n = 6000;
+  const int discard = 4000;
+
+  signal_processing::FilterConfig cfg{};
+  cfg.sampleRateHz = fs;
+  cfg.highPassCutoffHz = fc;
+  cfg.movingAverageWindow = 1;
+  cfg.accelScale = 1.0f;
+
+  auto runSine = [&](float toneHz) {
+    signal_processing::SignalProcessor proc;
+    proc.setConfig(cfg);
+    std::vector<signal_processing::ProcessedSample> out(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) {
+      const float t = static_cast<float>(i) / static_cast<float>(fs);
+      const float s = 2500.0f * std::sin(2.0f * kPi * toneHz * t);
+      const float clamped = std::max(-32768.0f, std::min(32767.0f, s));
+      const int16_t ax = static_cast<int16_t>(clamped);
+      imu::ImuSample in = makeSample(ax, 0, 0);
+      proc.processOne(in, out[static_cast<size_t>(i)]);
     }
+    return rmsAccelX(out, static_cast<size_t>(discard), static_cast<size_t>(n));
   };
 
-  std::thread a(worker, 0);
-  std::thread b(worker, 100);
-  a.join();
-  b.join();
+  const float rmsLow = runSine(0.08f);
+  const float rmsMid = runSine(1.0f);
+  const float rmsHigh = runSine(12.0f);
+
+  EXPECT_GT(rmsHigh, 50.0f);
+  EXPECT_LT(rmsLow, 0.45f * rmsHigh);
+  EXPECT_GT(rmsMid, rmsLow);
 }
