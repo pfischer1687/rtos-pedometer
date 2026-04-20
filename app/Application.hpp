@@ -13,6 +13,7 @@
 #include "rtos/Mail.h"
 #include "rtos/Thread.h"
 #include "signal_processing/SignalProcessing.hpp"
+#include "step_detection/StepDetector.hpp"
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -133,6 +134,7 @@ private:
 
   imu::Mpu6050Driver &_imu;
   signal_processing::SignalProcessor _signalProcessor;
+  step_detection::StepDetector _stepDetector;
 
   // Single-writer (IMU thread only), lock-free ring buffer for IMU events.
   message_types::ImuEvent _imuEventLog[Config::IMU_EVENT_LOG_SIZE]{};
@@ -161,6 +163,9 @@ private:
   std::atomic<uint32_t> _signalDropCount{0};
   std::atomic<uint32_t> _stepDropCount{0};
   std::atomic<uint32_t> _usbDropCount{0};
+
+  uint32_t _stepAcceptedCount{0};
+  uint32_t _stepRejectedConfidenceCount{0};
   std::atomic<uint8_t> _ledState{0};
 
   rtos::Thread _imuThread;

@@ -32,7 +32,12 @@ struct ParsedLine {
 /**
  * @brief Maximum length of one command line (bytes).
  */
-inline constexpr size_t USB_CMD_MAX_LEN = 64;
+inline constexpr size_t USB_CMD_MAX_LEN = 64u;
+
+/**
+ * @brief Maximum length of one response message (bytes).
+ */
+inline constexpr size_t USB_RESPONSE_MSG_MAX_BYTES = 384u;
 
 /**
  * @brief Parse a line into a ParsedLine.

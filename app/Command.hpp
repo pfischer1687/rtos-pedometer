@@ -16,6 +16,8 @@ enum class CommandId {
   Stop,
   Status,
   Reset,
+  TuneStart,
+  TuneStop,
 };
 
 /**

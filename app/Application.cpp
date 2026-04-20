@@ -17,6 +17,7 @@
 #include "usb/UsbInterface.hpp"
 #include "usb/UsbTransport.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -32,7 +33,12 @@ constexpr std::chrono::milliseconds THREAD_SLEEP_INTERVAL = 1ms;
 constexpr uint8_t STEP_CONF_THRESHOLD = 128u;
 constexpr float MILLI_G_PER_G = 1000.0f;
 
-} // namespace
+[[nodiscard]] uint8_t confidenceFloatToUint8(float c) noexcept {
+  const float x = std::clamp(c, 0.0f, 1.0f);
+  return static_cast<uint8_t>(x * 255.0f);
+}
+
+} // anonymous namespace
 
 Application::Application(imu::Mpu6050Driver &imu) noexcept
     : _imu(imu), _sessionToLedFlags("led_evt"),
@@ -40,7 +46,7 @@ Application::Application(imu::Mpu6050Driver &imu) noexcept
                  _stackImu.data, "imu_acq"),
       _signalThread(osPriorityHigh, Config::SIGNAL_THREAD_STACK_DEPTH,
                     _stackSignal.data, "sig_proc"),
-      _stepThread(osPriorityAboveNormal, Config::STEP_THREAD_STACK_DEPTH,
+      _stepThread(osPriorityHigh, Config::STEP_THREAD_STACK_DEPTH,
                   _stackStep.data, "step_det"),
       _sessionThread(osPriorityBelowNormal, Config::SESSION_THREAD_STACK_DEPTH,
                      _stackSession.data, "session"),
@@ -58,6 +64,9 @@ Application::Application(imu::Mpu6050Driver &imu) noexcept
           signal_processing::getAccelScale(_imu.getImuConfig().range)};
 
   _signalProcessor.setConfig(config);
+
+  step_detection::StepDetectorConfig stepCfg{};
+  _stepDetector.setConfig(stepCfg);
 }
 
 void Application::logImuEvent(message_types::ImuEventType type,
@@ -152,6 +161,16 @@ void Application::stepDetectionThread() {
 
     MailHandle<message_types::ProcessedImuDataFrame, Config::MAIL_DEPTH> in{
         _signalToStepMail, rawIn};
+    message_types::ProcessedImuDataFrame *inMsg = in.getMsg();
+
+    const float magG =
+        static_cast<float>(inMsg->accelMagnitudeMilliG) / MILLI_G_PER_G;
+    const step_detection::StepDecision decision =
+        _stepDetector.processSample(magG, inMsg->sourceTimestampUs);
+    if (!decision.event) {
+      continue;
+    }
+
     MailHandle<message_types::StepDetectionEvent, Config::MAIL_DEPTH> out{
         _stepToSessionMail};
     if (!out) [[unlikely]] {
@@ -160,12 +179,11 @@ void Application::stepDetectionThread() {
     }
 
     message_types::StepDetectionEvent *outMsg = out.getMsg();
-    message_types::ProcessedImuDataFrame *inMsg = in.getMsg();
+    // NOTE: sequence corresponds to triggering sample (_m2), not peak sample
+    // (_m1)
     outMsg->sequence = inMsg->sequence;
-    outMsg->peakTimeUs = inMsg->sourceTimestampUs;
-
-    // TODO: calculate step confidence.
-    outMsg->confidence = static_cast<uint8_t>(inMsg->sequence & 0xFFu);
+    outMsg->peakTimeUs = decision.event->timestampUs;
+    outMsg->confidence = confidenceFloatToUint8(decision.event->confidence);
 
     _stepToSessionMail.put(out.releaseMsg());
   }
@@ -198,16 +216,23 @@ void Application::sessionManagerThread() {
       switch (*appCmd) {
       case CommandId::Start:
         sessionRecording = true;
+        _stepDetector.reset();
         enqueueUsbResponse("OK");
         break;
       case CommandId::Stop:
         sessionRecording = false;
         enqueueUsbResponse("OK");
         break;
-      case CommandId::Status: {
+      case CommandId::Status:
+      case CommandId::TuneStop: {
         char buf[sizeof(message_types::UsbResponse::msg)];
+        const step_detection::StepDetectorDebugStats &st =
+            _stepDetector.getDebugStats();
         const int n = std::snprintf(
-            buf, sizeof(buf), "DROP sensor=%lu signal=%lu step=%lu usb=%lu",
+            buf, sizeof(buf),
+            "DROP sensor=%lu signal=%lu step=%lu usb=%lu "
+            "STEP peaks=%lu emitted=%lu slope=%lu valley=%lu baseline=%lu "
+            "interval=%lu accepted=%lu conf_rej=%lu",
             static_cast<unsigned long>(
                 _imuDropCount.load(std::memory_order_relaxed)),
             static_cast<unsigned long>(
@@ -215,19 +240,36 @@ void Application::sessionManagerThread() {
             static_cast<unsigned long>(
                 _stepDropCount.load(std::memory_order_relaxed)),
             static_cast<unsigned long>(
-                _usbDropCount.load(std::memory_order_relaxed)));
+                _usbDropCount.load(std::memory_order_relaxed)),
+            static_cast<unsigned long>(st.peaks),
+            static_cast<unsigned long>(st.emitted),
+            static_cast<unsigned long>(st.rejectSlope),
+            static_cast<unsigned long>(st.rejectValley),
+            static_cast<unsigned long>(st.rejectBaseline),
+            static_cast<unsigned long>(st.rejectInterval),
+            static_cast<unsigned long>(_stepAcceptedCount),
+            static_cast<unsigned long>(_stepRejectedConfidenceCount));
         if (n > 0 && static_cast<std::size_t>(n) < sizeof(buf)) {
           enqueueUsbResponse(
               std::string_view(buf, static_cast<std::size_t>(n)));
         }
         break;
       }
+      case CommandId::TuneStart:
+        _stepDetector.resetDebugStats();
+        _stepAcceptedCount = 0u;
+        _stepRejectedConfidenceCount = 0u;
+        enqueueUsbResponse("OK");
+        break;
       case CommandId::Reset:
         _imuDropCount.store(0, std::memory_order_relaxed);
         _imuSeq.store(0, std::memory_order_relaxed);
         _imuEventCount.store(0, std::memory_order_relaxed);
         steps = 0u;
         sessionRecording = false;
+        _stepDetector.resetDebugStats();
+        _stepAcceptedCount = 0u;
+        _stepRejectedConfidenceCount = 0u;
         enqueueUsbResponse("OK");
         break;
       }
@@ -240,15 +282,18 @@ void Application::sessionManagerThread() {
     }
 
     if (in->confidence >= STEP_CONF_THRESHOLD) {
+      ++_stepAcceptedCount;
       ++steps;
+    } else {
+      ++_stepRejectedConfidenceCount;
     }
 
     message_types::SessionNotification notice{};
     notice.sequence = in->sequence;
     notice.state = sessionRecording ? 1u : 0u;
     notice.stepCount = steps;
+    notice.confidence = in->confidence;
     (void)notice;
-    (void)in->confidence;
 
     _ledState.store(1, std::memory_order_relaxed);
     _sessionToLedFlags.set(Config::EVENT_LED_UPDATE);

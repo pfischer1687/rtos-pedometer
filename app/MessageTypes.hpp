@@ -47,13 +47,14 @@ struct SessionNotification {
   uint32_t sequence{0};
   uint8_t state{0};
   uint32_t stepCount{0};
+  uint8_t confidence{0};
 };
 
 /**
  * @brief Outbound text line for the USB thread (from session / workers).
  */
 struct UsbResponse {
-  char msg[usb::USB_CMD_MAX_LEN];
+  char msg[usb::USB_RESPONSE_MSG_MAX_BYTES]{};
 };
 
 /**
