@@ -15,6 +15,7 @@ enum class CommandId {
   Start,
   Stop,
   Status,
+  TuneStatus,
   Reset,
   TuneStart,
   TuneStop,

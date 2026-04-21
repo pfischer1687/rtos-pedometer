@@ -55,11 +55,8 @@ file(GLOB_RECURSE SUPPORT_MOCK_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE
 file(GLOB_RECURSE TEST_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp")
 set(HOST_SOURCES
   ${FIRMWARE_ROOT}/imu/Mpu6050Driver.cpp
-  ${FIRMWARE_ROOT}/led/RecordingLed.cpp
-  ${FIRMWARE_ROOT}/session/SessionManager.cpp
   ${FIRMWARE_ROOT}/signal_processing/SignalProcessing.cpp
   ${FIRMWARE_ROOT}/step_detection/StepDetector.cpp
-  ${FIRMWARE_ROOT}/usb/UsbInterface.cpp
 )
 
 include(FetchContent)

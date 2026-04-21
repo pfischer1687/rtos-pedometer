@@ -16,9 +16,10 @@ struct CommandEntry {
 };
 
 constexpr CommandEntry commandTable[] = {
-    {"START", CommandId::Start},          {"STOP", CommandId::Stop},
-    {"STATUS", CommandId::Status},        {"RESET", CommandId::Reset},
-    {"TUNE_START", CommandId::TuneStart}, {"TUNE_STOP", CommandId::TuneStop},
+    {"START", CommandId::Start},        {"STOP", CommandId::Stop},
+    {"STATUS", CommandId::Status},      {"TUNE_STATUS", CommandId::TuneStatus},
+    {"RESET", CommandId::Reset},        {"TUNE_START", CommandId::TuneStart},
+    {"TUNE_STOP", CommandId::TuneStop},
 };
 
 constexpr std::size_t COMMAND_COUNT =

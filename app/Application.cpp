@@ -14,6 +14,7 @@
 #include "rtos/Mail.h"
 #include "rtos/ThisThread.h"
 #include "rtos/Thread.h"
+#include "session/SessionManager.hpp"
 #include "usb/UsbInterface.hpp"
 #include "usb/UsbTransport.hpp"
 
@@ -30,7 +31,6 @@ namespace {
 
 constexpr std::chrono::milliseconds SESSION_POLL_INTERVAL = 25ms;
 constexpr std::chrono::milliseconds THREAD_SLEEP_INTERVAL = 1ms;
-constexpr uint8_t STEP_CONF_THRESHOLD = 128u;
 constexpr float MILLI_G_PER_G = 1000.0f;
 
 [[nodiscard]] uint8_t confidenceFloatToUint8(float c) noexcept {
@@ -203,9 +203,6 @@ void Application::enqueueUsbResponse(std::string_view text) noexcept {
 }
 
 void Application::sessionManagerThread() {
-  uint32_t steps = 0u;
-  bool sessionRecording = false;
-
   while (true) {
     message_types::StepDetectionEvent *in =
         _stepToSessionMail.try_get_for(SESSION_POLL_INTERVAL);
@@ -214,63 +211,72 @@ void Application::sessionManagerThread() {
     while ((appCmd = _usbToSessionMail.try_get())) {
       // TODO: handle session commands here.
       switch (*appCmd) {
-      case CommandId::Start:
-        sessionRecording = true;
-        _stepDetector.reset();
-        enqueueUsbResponse("OK");
+      case CommandId::Start: {
+        const bool ok = _sessionManager.startSession(platform::getTimeUs());
+        enqueueUsbResponse(ok ? "OK" : "FAIL");
         break;
-      case CommandId::Stop:
-        sessionRecording = false;
-        enqueueUsbResponse("OK");
+      }
+      case CommandId::Stop: {
+        const bool ok = _sessionManager.stopSession(platform::getTimeUs());
+        enqueueUsbResponse(ok ? "OK" : "FAIL");
         break;
-      case CommandId::Status:
-      case CommandId::TuneStop: {
+      }
+      case CommandId::Status: {
         char buf[sizeof(message_types::UsbResponse::msg)];
-        const step_detection::StepDetectorDebugStats &st =
-            _stepDetector.getDebugStats();
-        const int n = std::snprintf(
-            buf, sizeof(buf),
-            "DROP sensor=%lu signal=%lu step=%lu usb=%lu "
-            "STEP peaks=%lu emitted=%lu slope=%lu valley=%lu baseline=%lu "
-            "interval=%lu accepted=%lu conf_rej=%lu",
-            static_cast<unsigned long>(
-                _imuDropCount.load(std::memory_order_relaxed)),
-            static_cast<unsigned long>(
-                _signalDropCount.load(std::memory_order_relaxed)),
-            static_cast<unsigned long>(
-                _stepDropCount.load(std::memory_order_relaxed)),
-            static_cast<unsigned long>(
-                _usbDropCount.load(std::memory_order_relaxed)),
-            static_cast<unsigned long>(st.peaks),
-            static_cast<unsigned long>(st.emitted),
-            static_cast<unsigned long>(st.rejectSlope),
-            static_cast<unsigned long>(st.rejectValley),
-            static_cast<unsigned long>(st.rejectBaseline),
-            static_cast<unsigned long>(st.rejectInterval),
-            static_cast<unsigned long>(_stepAcceptedCount),
-            static_cast<unsigned long>(_stepRejectedConfidenceCount));
+        const std::size_t n = _sessionManager.formatReport(buf, sizeof(buf));
+        if (n > 0u) {
+          enqueueUsbResponse(std::string_view(buf, n));
+        }
+        break;
+      }
+      case CommandId::TuneStatus: {
+        const session::TuningSnapshot t = _sessionManager.getTuningSnapshot();
+        const auto &st = t.detectorStats;
+        if (t.acceptedStepCount == 0u && t.rejectedStepCount == 0u &&
+            st.peaks == 0u && st.emitted == 0u && st.rejectSlope == 0u &&
+            st.rejectInterval == 0u) {
+          enqueueUsbResponse("TUNE inactive");
+          break;
+        }
+        char buf[sizeof(message_types::UsbResponse::msg)];
+        const int n =
+            std::snprintf(buf, sizeof(buf),
+                          "TUNE accepted=%lu rejected=%lu peaks=%lu "
+                          "emitted=%lu slope=%lu interval=%lu",
+                          static_cast<unsigned long>(t.acceptedStepCount),
+                          static_cast<unsigned long>(t.rejectedStepCount),
+                          static_cast<unsigned long>(st.peaks),
+                          static_cast<unsigned long>(st.emitted),
+                          static_cast<unsigned long>(st.rejectSlope),
+                          static_cast<unsigned long>(st.rejectInterval));
         if (n > 0 && static_cast<std::size_t>(n) < sizeof(buf)) {
           enqueueUsbResponse(
               std::string_view(buf, static_cast<std::size_t>(n)));
         }
         break;
       }
-      case CommandId::TuneStart:
-        _stepDetector.resetDebugStats();
-        _stepAcceptedCount = 0u;
-        _stepRejectedConfidenceCount = 0u;
-        enqueueUsbResponse("OK");
+      case CommandId::TuneStart: {
+        const bool ok = _sessionManager.startTuning(platform::getTimeUs());
+        enqueueUsbResponse(ok ? "OK" : "FAIL");
         break;
+      }
+      case CommandId::TuneStop: {
+        const bool ok = _sessionManager.stopTuning(platform::getTimeUs());
+        enqueueUsbResponse(ok ? "OK" : "FAIL");
+        break;
+      }
       case CommandId::Reset:
         _imuDropCount.store(0, std::memory_order_relaxed);
         _imuSeq.store(0, std::memory_order_relaxed);
         _imuEventCount.store(0, std::memory_order_relaxed);
-        steps = 0u;
-        sessionRecording = false;
         _stepDetector.resetDebugStats();
-        _stepAcceptedCount = 0u;
-        _stepRejectedConfidenceCount = 0u;
+        (void)_sessionManager.stopTuning(platform::getTimeUs());
+        (void)_sessionManager.stopSession(platform::getTimeUs());
+        (void)_sessionManager.stopTuning(platform::getTimeUs());
         enqueueUsbResponse("OK");
+        break;
+      default:
+        enqueueUsbResponse("INVALID_COMMAND");
         break;
       }
 
@@ -281,21 +287,21 @@ void Application::sessionManagerThread() {
       continue;
     }
 
-    if (in->confidence >= STEP_CONF_THRESHOLD) {
-      ++_stepAcceptedCount;
-      ++steps;
-    } else {
-      ++_stepRejectedConfidenceCount;
-    }
+    step_detection::StepEvent evt{};
+    evt.timestampUs = in->peakTimeUs;
+    evt.confidence = static_cast<float>(in->confidence) / 255.0f;
 
+    _sessionManager.onStep(evt);
+
+    const bool active = _sessionManager.isActive();
+    const uint8_t ledState = active ? 1u : 0u;
+    _ledState.store(ledState, std::memory_order_relaxed);
     message_types::SessionNotification notice{};
     notice.sequence = in->sequence;
-    notice.state = sessionRecording ? 1u : 0u;
-    notice.stepCount = steps;
+    notice.state = ledState;
+    notice.stepCount = _sessionManager.getStepCount();
     notice.confidence = in->confidence;
     (void)notice;
-
-    _ledState.store(1, std::memory_order_relaxed);
     _sessionToLedFlags.set(Config::EVENT_LED_UPDATE);
     _stepToSessionMail.free(in);
   }
@@ -363,8 +369,8 @@ void Application::ledManagerThread() {
       continue;
     }
     (void)w;
-    uint8_t state = _ledState.load(std::memory_order_relaxed);
-    (void)state;
+    uint8_t ledState = _ledState.load(std::memory_order_relaxed);
+    (void)ledState;
     // TODO: drive board LEDs via a future hal::ILed when wired.
   }
 }
