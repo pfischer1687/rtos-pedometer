@@ -9,17 +9,7 @@
 #include "usb/IUsbTransport.hpp"
 #include <array>
 #include <cstddef>
-#include <cstdint>
 #include <string_view>
-
-/**
- * @namespace session
- * @brief Session related types and functions.
- */
-namespace session {
-struct SessionSnapshot;
-enum class SessionState : uint8_t;
-} // namespace session
 
 namespace usb {
 
@@ -71,12 +61,6 @@ public:
    * @brief Print the prompt to the USB.
    */
   void printPrompt() noexcept;
-
-  /**
-   * @brief Send status line (step count, state).
-   * @param snapshot Session snapshot.
-   */
-  void sendStatus(const session::SessionSnapshot &snapshot) noexcept;
 
   /**
    * @brief Send raw response string.

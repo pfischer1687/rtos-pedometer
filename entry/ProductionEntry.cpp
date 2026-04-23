@@ -23,7 +23,7 @@ constexpr uint8_t kImuI2cAddr7Bit = 0x68u;
                                 kImuI2cAddr7Bit);
   imu.attachDataReadyInput(platform::dataReadyInput());
 
-  static app::Application application(imu);
+  static app::Application application(imu, platform::watchdog());
   application.run();
 }
 

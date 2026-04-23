@@ -5,7 +5,6 @@
 
 #include "usb/UsbInterface.hpp"
 #include "platform/StringUtils.hpp"
-#include "session/SessionManager.hpp"
 #include <cstdio>
 #include <cstring>
 #include <type_traits>
@@ -157,25 +156,6 @@ void UsbInterface::sendResponse(const char *msg) noexcept {
 
 void UsbInterface::sendError(const char *msg) noexcept {
   _transport.writeLine(msg);
-}
-
-void UsbInterface::sendStatus(
-    const session::SessionSnapshot &snapshot) noexcept {
-
-  char buffer[128];
-
-  const int written =
-      std::snprintf(buffer, sizeof(buffer), "STEPS=%u STATE=%u",
-                    static_cast<unsigned>(snapshot.stepCount),
-                    static_cast<std::underlying_type_t<session::SessionState>>(
-                        snapshot.state));
-
-  if (written < 0 || static_cast<std::size_t>(written) >= sizeof(buffer)) {
-    sendError("FORMAT_ERROR");
-    return;
-  }
-
-  sendResponse(buffer);
 }
 
 } // namespace usb

@@ -37,7 +37,7 @@ struct ProcessedImuDataFrame {
 struct StepDetectionEvent {
   uint32_t sequence{0};
   uint32_t peakTimeUs{0};
-  uint8_t confidence{0};
+  float confidence{0.0f};
 };
 
 /**
@@ -47,7 +47,7 @@ struct SessionNotification {
   uint32_t sequence{0};
   uint8_t state{0};
   uint32_t stepCount{0};
-  uint8_t confidence{0};
+  float confidence{0.0f};
 };
 
 /**

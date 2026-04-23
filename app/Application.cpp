@@ -18,7 +18,6 @@
 #include "usb/UsbInterface.hpp"
 #include "usb/UsbTransport.hpp"
 
-#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -32,16 +31,16 @@ namespace {
 constexpr std::chrono::milliseconds SESSION_POLL_INTERVAL = 25ms;
 constexpr std::chrono::milliseconds THREAD_SLEEP_INTERVAL = 1ms;
 constexpr float MILLI_G_PER_G = 1000.0f;
-
-[[nodiscard]] uint8_t confidenceFloatToUint8(float c) noexcept {
-  const float x = std::clamp(c, 0.0f, 1.0f);
-  return static_cast<uint8_t>(x * 255.0f);
-}
+constexpr uint32_t WATCHDOG_TIMEOUT_MS = 2000;
+constexpr std::chrono::milliseconds WATCHDOG_KICK_INTERVAL = 500ms;
+constexpr uint32_t WATCHDOG_MAX_IMU_SILENCE_US = 2'000'000u;
+constexpr float WATCHDOG_MAX_IMU_DROPPED_FRACTION = 0.5f;
 
 } // anonymous namespace
 
-Application::Application(imu::Mpu6050Driver &imu) noexcept
-    : _imu(imu), _sessionToLedFlags("led_evt"),
+Application::Application(imu::Mpu6050Driver &imu,
+                         platform::IWatchdog &watchdog) noexcept
+    : _imu(imu), _watchdog(watchdog), _sessionToLedFlags("led_evt"),
       _imuThread(osPriorityRealtime, Config::IMU_THREAD_STACK_DEPTH,
                  _stackImu.data, "imu_acq"),
       _signalThread(osPriorityHigh, Config::SIGNAL_THREAD_STACK_DEPTH,
@@ -105,6 +104,7 @@ void Application::tryAcquireAndSendImuSample() noexcept {
   msg->sequence = _imuSeq.fetch_add(1, std::memory_order_relaxed);
   msg->sample = sample;
 
+  _lastImuTickUs.store(sample.timestampUs, std::memory_order_relaxed);
   _sensorToSignalMail.put(mailHandle.releaseMsg());
 }
 
@@ -183,144 +183,98 @@ void Application::stepDetectionThread() {
     // (_m1)
     outMsg->sequence = inMsg->sequence;
     outMsg->peakTimeUs = decision.event->timestampUs;
-    outMsg->confidence = confidenceFloatToUint8(decision.event->confidence);
+    outMsg->confidence = decision.event->confidence;
 
     _stepToSessionMail.put(out.releaseMsg());
   }
 }
 
-void Application::enqueueUsbResponse(std::string_view text) noexcept {
-  message_types::UsbResponse *slot = _sessionToUsbMail.try_alloc();
-  if (!slot) {
-    return;
-  }
-
+void Application::writeUsbResponse(std::string_view text,
+                                   message_types::UsbResponse *slot) noexcept {
   constexpr std::size_t cap = sizeof(slot->msg) - 1u;
   const std::size_t n = text.size() < cap ? text.size() : cap;
   std::memcpy(slot->msg, text.data(), n);
   slot->msg[n] = '\0';
-  _sessionToUsbMail.put(slot);
 }
 
 void Application::sessionManagerThread() {
   while (true) {
-    message_types::StepDetectionEvent *in =
-        _stepToSessionMail.try_get_for(SESSION_POLL_INTERVAL);
+    CommandId *rawInUsb;
+    while ((rawInUsb = _usbToSessionMail.try_get())) {
+      MailHandle<CommandId, Config::MAIL_DEPTH> inUsb{_usbToSessionMail,
+                                                      rawInUsb};
 
-    CommandId *appCmd;
-    while ((appCmd = _usbToSessionMail.try_get())) {
-      // TODO: handle session commands here.
-      switch (*appCmd) {
+      MailHandle<message_types::UsbResponse, Config::MAIL_DEPTH> out{
+          _sessionToUsbMail};
+      if (!out) [[unlikely]] {
+        _sessionDropCount.fetch_add(1, std::memory_order_relaxed);
+        continue;
+      }
+
+      switch (*inUsb.getMsg()) {
       case CommandId::Start: {
         const bool ok = _sessionManager.startSession(platform::getTimeUs());
-        enqueueUsbResponse(ok ? "OK" : "FAIL");
+        writeUsbResponse(ok ? "OK" : "FAIL", out.getMsg());
         break;
       }
       case CommandId::Stop: {
         const bool ok = _sessionManager.stopSession(platform::getTimeUs());
-        enqueueUsbResponse(ok ? "OK" : "FAIL");
+        writeUsbResponse(ok ? "OK" : "FAIL", out.getMsg());
         break;
       }
       case CommandId::Status: {
         char buf[sizeof(message_types::UsbResponse::msg)];
         const std::size_t n = _sessionManager.formatReport(buf, sizeof(buf));
-        if (n > 0u) {
-          enqueueUsbResponse(std::string_view(buf, n));
-        }
+        std::string_view text = n > 0u ? std::string_view(buf, n) : "FAIL";
+        writeUsbResponse(text, out.getMsg());
         break;
       }
-      case CommandId::TuneStatus: {
-        const session::TuningSnapshot t = _sessionManager.getTuningSnapshot();
-        const auto &st = t.detectorStats;
-        if (t.acceptedStepCount == 0u && t.rejectedStepCount == 0u &&
-            st.peaks == 0u && st.emitted == 0u && st.rejectSlope == 0u &&
-            st.rejectInterval == 0u) {
-          enqueueUsbResponse("TUNE inactive");
-          break;
-        }
+      case CommandId::DebugStatus: {
         char buf[sizeof(message_types::UsbResponse::msg)];
-        const int n =
-            std::snprintf(buf, sizeof(buf),
-                          "TUNE accepted=%lu rejected=%lu peaks=%lu "
-                          "emitted=%lu slope=%lu interval=%lu",
-                          static_cast<unsigned long>(t.acceptedStepCount),
-                          static_cast<unsigned long>(t.rejectedStepCount),
-                          static_cast<unsigned long>(st.peaks),
-                          static_cast<unsigned long>(st.emitted),
-                          static_cast<unsigned long>(st.rejectSlope),
-                          static_cast<unsigned long>(st.rejectInterval));
-        if (n > 0 && static_cast<std::size_t>(n) < sizeof(buf)) {
-          enqueueUsbResponse(
-              std::string_view(buf, static_cast<std::size_t>(n)));
-        }
-        break;
-      }
-      case CommandId::TuneStart: {
-        const bool ok = _sessionManager.startTuning(platform::getTimeUs());
-        enqueueUsbResponse(ok ? "OK" : "FAIL");
-        break;
-      }
-      case CommandId::TuneStop: {
-        const bool ok = _sessionManager.stopTuning(platform::getTimeUs());
-        enqueueUsbResponse(ok ? "OK" : "FAIL");
+        _sessionManager.setStepDetectorDebugStats(
+            _stepDetector.getDebugStats());
+        const std::size_t n =
+            _sessionManager.formatDebugReport(buf, sizeof(buf));
+        std::string_view text = n > 0u ? std::string_view(buf, n) : "FAIL";
+        writeUsbResponse(text, out.getMsg());
         break;
       }
       case CommandId::Reset:
         _imuDropCount.store(0, std::memory_order_relaxed);
         _imuSeq.store(0, std::memory_order_relaxed);
         _imuEventCount.store(0, std::memory_order_relaxed);
+        _sessionManager.resetDebugStats();
         _stepDetector.resetDebugStats();
-        (void)_sessionManager.stopTuning(platform::getTimeUs());
         (void)_sessionManager.stopSession(platform::getTimeUs());
-        (void)_sessionManager.stopTuning(platform::getTimeUs());
-        enqueueUsbResponse("OK");
+        writeUsbResponse("OK", out.getMsg());
         break;
       default:
-        enqueueUsbResponse("INVALID_COMMAND");
+        writeUsbResponse("INVALID_COMMAND", out.getMsg());
         break;
       }
 
-      _usbToSessionMail.free(appCmd);
+      _sessionToUsbMail.put(out.releaseMsg());
     }
 
-    if (!in) {
+    const uint8_t ledState = _sessionManager.isActive() ? 1u : 0u;
+    _ledState.store(ledState, std::memory_order_relaxed);
+    _sessionToLedFlags.set(Config::EVENT_LED_UPDATE);
+
+    message_types::StepDetectionEvent *rawInStep =
+        _stepToSessionMail.try_get_for(SESSION_POLL_INTERVAL);
+    if (!rawInStep) {
       continue;
     }
+    MailHandle<message_types::StepDetectionEvent, Config::MAIL_DEPTH> inStep{
+        _stepToSessionMail, rawInStep};
+    message_types::StepDetectionEvent *inMsgStep = inStep.getMsg();
 
     step_detection::StepEvent evt{};
-    evt.timestampUs = in->peakTimeUs;
-    evt.confidence = static_cast<float>(in->confidence) / 255.0f;
+    evt.timestampUs = inMsgStep->peakTimeUs;
+    evt.confidence = inMsgStep->confidence;
 
     _sessionManager.onStep(evt);
-
-    const bool active = _sessionManager.isActive();
-    const uint8_t ledState = active ? 1u : 0u;
-    _ledState.store(ledState, std::memory_order_relaxed);
-    message_types::SessionNotification notice{};
-    notice.sequence = in->sequence;
-    notice.state = ledState;
-    notice.stepCount = _sessionManager.getStepCount();
-    notice.confidence = in->confidence;
-    (void)notice;
-    _sessionToLedFlags.set(Config::EVENT_LED_UPDATE);
-    _stepToSessionMail.free(in);
   }
-}
-
-message_types::ImuHealthSnapshot
-Application::getImuHealthSnapshot() const noexcept {
-  const uint32_t seq = _imuSeq.load(std::memory_order_relaxed);
-  const uint32_t drop = _imuDropCount.load(std::memory_order_relaxed);
-  const uint32_t events = _imuEventCount.load(std::memory_order_relaxed);
-
-  const uint32_t buffered = (events < Config::IMU_EVENT_LOG_SIZE)
-                                ? events
-                                : Config::IMU_EVENT_LOG_SIZE;
-
-  return message_types::ImuHealthSnapshot{.totalSamples = seq,
-                                          .dropCount = drop,
-                                          .totalEvents = events,
-                                          .bufferedEvents = buffered};
 }
 
 void Application::usbCommandThread() {
@@ -375,8 +329,48 @@ void Application::ledManagerThread() {
   }
 }
 
+message_types::ImuHealthSnapshot
+Application::getImuHealthSnapshot() const noexcept {
+  const uint32_t seq = _imuSeq.load(std::memory_order_relaxed);
+  const uint32_t drop = _imuDropCount.load(std::memory_order_relaxed);
+  const uint32_t events = _imuEventCount.load(std::memory_order_relaxed);
+
+  const uint32_t buffered = (events < Config::IMU_EVENT_LOG_SIZE)
+                                ? events
+                                : Config::IMU_EVENT_LOG_SIZE;
+
+  return message_types::ImuHealthSnapshot{.totalSamples = seq,
+                                          .dropCount = drop,
+                                          .totalEvents = events,
+                                          .bufferedEvents = buffered};
+}
+
+void Application::watchdogThread() {
+  while (true) {
+    const uint32_t lastImuTickUs =
+        _lastImuTickUs.load(std::memory_order_relaxed);
+    const uint32_t imuSilenceUs =
+        platform::elapsed(lastImuTickUs, platform::getTimeUs());
+    const bool imuAlive = (imuSilenceUs <= WATCHDOG_MAX_IMU_SILENCE_US);
+
+    const message_types::ImuHealthSnapshot imuHealth = getImuHealthSnapshot();
+    const float droppedFraction = static_cast<float>(imuHealth.dropCount) /
+                                  static_cast<float>(imuHealth.totalSamples);
+    const bool imuHealthy =
+        (droppedFraction < WATCHDOG_MAX_IMU_DROPPED_FRACTION);
+
+    if (imuAlive && imuHealthy) [[likely]] {
+      _watchdog.kick();
+    }
+
+    rtos::ThisThread::sleep_for(WATCHDOG_KICK_INTERVAL);
+  }
+}
+
 void Application::startThreads() noexcept {
   using mbed::callback;
+
+  MBED_ASSERT(_watchdog.start(WATCHDOG_TIMEOUT_MS) == platform::Result::Ok);
 
   MBED_ASSERT(_imuThread.start(callback(
                   this, &Application::imuDataAcquisitionThread)) == osOK);
@@ -390,6 +384,8 @@ void Application::startThreads() noexcept {
       _usbThread.start(callback(this, &Application::usbCommandThread)) == osOK);
   MBED_ASSERT(
       _ledThread.start(callback(this, &Application::ledManagerThread)) == osOK);
+  MBED_ASSERT(_watchdogThread.start(
+                  callback(this, &Application::watchdogThread)) == osOK);
 }
 
 [[noreturn]] void Application::run() noexcept {

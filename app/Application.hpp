@@ -32,8 +32,10 @@ public:
   /**
    * @brief Constructor.
    * @param imu IMU driver.
+   * @param watchdog Watchdog.
    */
-  explicit Application(imu::Mpu6050Driver &imu) noexcept;
+  explicit Application(imu::Mpu6050Driver &imu,
+                       platform::IWatchdog &watchdog) noexcept;
 
   ~Application() = default;
   Application(const Application &) = delete;
@@ -51,6 +53,11 @@ public:
    * @return IMU health snapshot.
    */
   message_types::ImuHealthSnapshot getImuHealthSnapshot() const noexcept;
+
+  /**
+   * @brief Thread implementing a watchdog for IMU data silence.
+   */
+  void watchdogThread();
 
 private:
   /**
@@ -129,11 +136,15 @@ private:
                    uint32_t timestampUs) noexcept;
 
   /**
-   * @brief Queue a response for the USB thread (non-blocking; drops if full).
+   * @brief Write a response for the USB thread.
+   * @param text Response text.
+   * @param slot Response slot.
    */
-  void enqueueUsbResponse(std::string_view text) noexcept;
+  void writeUsbResponse(std::string_view text,
+                        message_types::UsbResponse *slot) noexcept;
 
   imu::Mpu6050Driver &_imu;
+  platform::IWatchdog &_watchdog;
   signal_processing::SignalProcessor _signalProcessor;
   step_detection::StepDetector _stepDetector;
   session::SessionManager _sessionManager;
@@ -164,6 +175,7 @@ private:
   std::atomic<uint32_t> _imuDropCount{0};
   std::atomic<uint32_t> _signalDropCount{0};
   std::atomic<uint32_t> _stepDropCount{0};
+  std::atomic<uint32_t> _sessionDropCount{0};
   std::atomic<uint32_t> _usbDropCount{0};
   std::atomic<uint8_t> _ledState{0};
 
@@ -173,6 +185,9 @@ private:
   rtos::Thread _sessionThread;
   rtos::Thread _usbThread;
   rtos::Thread _ledThread;
+  rtos::Thread _watchdogThread;
+
+  std::atomic<uint32_t> _lastImuTickUs{0};
 };
 
 } // namespace app

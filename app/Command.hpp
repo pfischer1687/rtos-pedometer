@@ -15,10 +15,8 @@ enum class CommandId {
   Start,
   Stop,
   Status,
-  TuneStatus,
+  DebugStatus,
   Reset,
-  TuneStart,
-  TuneStop,
 };
 
 /**
