@@ -7,7 +7,6 @@
 #include "platform/StringUtils.hpp"
 #include <cstdio>
 #include <cstring>
-#include <type_traits>
 
 namespace usb {
 

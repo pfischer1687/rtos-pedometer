@@ -289,8 +289,11 @@ void Application::usbCommandThread() {
   while (true) {
     message_types::UsbResponse *resp;
     while ((resp = _sessionToUsbMail.try_get())) {
-      iface.sendResponse(resp->msg);
-      _sessionToUsbMail.free(resp);
+      MailHandle<message_types::UsbResponse, Config::MAIL_DEPTH> inSess{
+          _sessionToUsbMail, resp};
+      message_types::UsbResponse *inMsg = inSess.getMsg();
+
+      iface.sendResponse(inMsg->msg);
     }
 
     if (!iface.poll(lineBuf, sizeof(lineBuf))) {
@@ -300,17 +303,19 @@ void Application::usbCommandThread() {
 
     const usb::ParsedLine pl = usb::parseLine(std::string_view(lineBuf));
     if (std::optional<CommandId> cmd = parseCommand(pl)) {
-      if (CommandId *mail = _usbToSessionMail.try_alloc()) {
-        *mail = *cmd;
-        _usbToSessionMail.put(mail);
-      } else {
+      MailHandle<CommandId, Config::MAIL_DEPTH> out{_usbToSessionMail};
+      if (!out) [[unlikely]] {
         _usbDropCount.fetch_add(1, std::memory_order_relaxed);
         iface.sendResponse("CMD_QUEUE_FULL");
+        iface.printPrompt();
+        continue;
       }
-    } else {
-      iface.sendResponse("UNKNOWN_COMMAND");
+
+      *out.getMsg() = *cmd;
+      _usbToSessionMail.put(out.releaseMsg());
     }
 
+    iface.sendResponse("UNKNOWN_COMMAND");
     iface.printPrompt();
   }
 }
