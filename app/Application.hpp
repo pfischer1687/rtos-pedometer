@@ -24,6 +24,26 @@
 namespace app {
 
 /**
+ * @brief IMU snapshot.
+ */
+struct ImuSnapshot {
+  std::uint32_t totalDrops{};
+  std::uint32_t totalSeq{};
+  std::uint32_t windowStart{};
+  std::uint32_t baseDrops{};
+  std::uint32_t baseSeq{};
+};
+
+/**
+ * @brief Watchdog snapshot.
+ */
+struct WatchdogSnapshot {
+  bool imuLive{};
+  bool imuDropsOk{};
+  bool sessionOk{};
+};
+
+/**
  * @class Application
  * @brief Owns RTOS threads, mail queues, event flags, and drop counters for the
  * motion pipeline.
@@ -67,17 +87,22 @@ private:
   struct Config {
     static constexpr uint32_t MAIL_DEPTH = 32u;
 
-    static constexpr uint32_t EVENT_IMU_DATA_READY = 1u << 0;
-    static constexpr uint32_t EVENT_LED_UPDATE = 1u << 1;
+    static constexpr uint32_t EVENT_USB_WAKE_SESSION = 1u << 0;
+    static constexpr uint32_t EVENT_STEP_WAKE_SESSION = 1u << 1;
+    static constexpr uint32_t EVENT_SESSION_WAKE_MASK =
+        EVENT_USB_WAKE_SESSION | EVENT_STEP_WAKE_SESSION;
 
-    static constexpr std::size_t IMU_THREAD_STACK_DEPTH = 3072u;
-    static constexpr std::size_t SIGNAL_THREAD_STACK_DEPTH = 3072u;
+    static constexpr std::size_t IMU_THREAD_STACK_DEPTH = 2048u;
+    static constexpr std::size_t SIGNAL_THREAD_STACK_DEPTH = 2048u;
     static constexpr std::size_t STEP_THREAD_STACK_DEPTH = 2048u;
     static constexpr std::size_t SESSION_THREAD_STACK_DEPTH = 2048u;
-    static constexpr std::size_t USB_THREAD_STACK_DEPTH = 4096u;
-    static constexpr std::size_t LED_THREAD_STACK_DEPTH = 1536u;
+    static constexpr std::size_t USB_THREAD_STACK_DEPTH = 2048u;
+    static constexpr std::size_t LED_THREAD_STACK_DEPTH = 2048u;
 
     static constexpr std::size_t IMU_EVENT_LOG_SIZE = 32u;
+
+    static constexpr std::uint32_t SESSION_MAX_USB_PER_LOOP = 12u;
+    static constexpr std::uint32_t SESSION_MAX_STEPS_PER_LOOP = 12u;
   };
 
   /**
@@ -149,6 +174,66 @@ private:
   void writeUsbResponse(std::string_view text,
                         message_types::UsbResponse *slot) noexcept;
 
+  /**
+   * @brief Wait for session wakeup.
+   * @return True if session woke up, false if timeout.
+   */
+  bool waitOnSessionWakeup() noexcept;
+
+  /**
+   * @brief Handle USB commands up to a maximum.
+   * @param max Maximum number of commands to handle.
+   * @return Number of commands handled.
+   */
+  std::uint32_t handleUsbCommandsUpTo(std::uint32_t max) noexcept;
+
+  /**
+   * @brief Handle step events up to a maximum.
+   * @param max Maximum number of events to handle.
+   * @return Number of events handled.
+   */
+  std::uint32_t handleStepEventsUpTo(std::uint32_t max) noexcept;
+
+  /**
+   * @brief Update session state and LED.
+   */
+  void updateSessionStateAndLED() noexcept;
+
+  /**
+   * @brief Check if IMU is live.
+   * @param now Current time.
+   * @return True if IMU is live, false otherwise.
+   */
+  [[nodiscard]] bool isImuLive(std::uint32_t now) const noexcept;
+
+  /**
+   * @brief Check if session is healthy.
+   * @param now Current time.
+   * @return True if session is healthy, false otherwise.
+   */
+  [[nodiscard]] bool isSessionHealthy(std::uint32_t now) const noexcept;
+
+  /**
+   * @brief Read IMU snapshot.
+   * @return IMU snapshot.
+   */
+  [[nodiscard]] ImuSnapshot readImuSnapshot() const noexcept;
+
+  /**
+   * @brief Check if IMU drop rate is ok.
+   * @param s IMU snapshot.
+   * @param now Current time.
+   * @return True if IMU drop rate is ok, false otherwise.
+   */
+  [[nodiscard]] bool isImuDropRateOk(const ImuSnapshot &s,
+                                     std::uint32_t now) noexcept;
+  /**
+   * @brief Evaluate watchdog.
+   * @param now Current time.
+   * @return Watchdog snapshot.
+   */
+  [[nodiscard]] WatchdogSnapshot evaluateWatchdog(std::uint32_t now) noexcept;
+
   imu::Mpu6050Driver &_imu;
   platform::IWatchdog &_watchdog;
   signal_processing::SignalProcessor _signalProcessor;
@@ -156,9 +241,14 @@ private:
   session::SessionManager _sessionManager;
   led::RecordingLed _recordingLed{};
 
-  // Single-writer (IMU thread only), lock-free ring buffer for IMU events.
+  // Single-producer (IMU thread only), lock-free ring buffer for IMU events.
   message_types::ImuEvent _imuEventLog[Config::IMU_EVENT_LOG_SIZE]{};
   std::atomic<uint32_t> _imuEventCount{0};
+
+  std::atomic<std::uint32_t> _wDogImuWindowStartUs{0};
+  std::atomic<std::uint32_t> _wDogImuWindowBaseDrops{0};
+  std::atomic<std::uint32_t> _wDogImuWindowBaseSeq{0};
+  std::atomic<std::uint32_t> _wDogImuSnapshotGen{0};
 
   ThreadStack<Config::IMU_THREAD_STACK_DEPTH> _stackImu{};
   ThreadStack<Config::SIGNAL_THREAD_STACK_DEPTH> _stackSignal{};
@@ -167,7 +257,7 @@ private:
   ThreadStack<Config::USB_THREAD_STACK_DEPTH> _stackUsb{};
   ThreadStack<Config::LED_THREAD_STACK_DEPTH> _stackLed{};
 
-  rtos::EventFlags _sessionToLedFlags;
+  rtos::EventFlags _sessionSignal;
 
   rtos::Mail<message_types::RawImuDataFrame, Config::MAIL_DEPTH>
       _sensorToSignalMail;
@@ -185,6 +275,8 @@ private:
   std::atomic<uint32_t> _sessionDropCount{0};
   std::atomic<uint32_t> _usbDropCount{0};
   std::atomic<led::LedState> _ledState{led::LedState::Idle};
+  std::atomic<uint32_t> _sessionHeartbeatUs{0};
+  std::atomic<uint32_t> _ledVersion{0};
 
   rtos::Thread _imuThread;
   rtos::Thread _signalThread;
