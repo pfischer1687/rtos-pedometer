@@ -1,17 +1,17 @@
 # rtos-pedometer
 
 RTOS-based pedometer firmware featuring deterministic execution, interrupt-driven IMU sampling, and real-time step
-detection on STM32 Nucleo-F767ZI with an MPU-6050.
+detection on an STM32 Nucleo-F767ZI board with an MPU-6050 IMU.
 
 ## Features
 
-- Real-time IMU sampling via MPU-6050 interrupt pin (data-ready signals)
-- Step detection using a threshold and timing algorithm
-- Session management: start, pause, resume, stop
-- Signal processing pipeline: high-pass and low-pass filtering of accelerometer data
-- USB command interface for telemetry and session control
-- LED feedback for recording and status indication
-- Watchdog integration for system reliability
+- Real-time IMU sampling via MPU-6050 interrupt pin (data-ready signals, I2C)
+- Digital signal processing pipeline with a high-pass IIR filter on accelerometer data
+- Step detection using a confidence threshold and peak detection algorithm
+- Session management via USB interface
+- RTOS thread IPC via mail queues
+- LED-based state indication
+- Watchdog supervision
 
 ## Hardware
 
@@ -29,15 +29,13 @@ git submodule add --depth 1 https://github.com/mbed-ce/mbed-os.git mbed-os
 ## Usage
 
 - Plug in USB to PC for debugging/command interface.
-- LED indicates recording status:
-  - Off/Slow blink: idle
-  - Solid: recording
-  - Fast blink: error
+- LD3 indicates recording status
 - Commands (over USB CDC interface):
   - `START`: begin session
   - `STOP`: end session
   - `STATUS`: query current session metrics
   - `RESET`: reset step count and session
+  - `DEBUG_STATUS`: collect debug info for tuning step detection thresholds
 
 ## Debugging Unit Tests on Host Device
 
@@ -56,7 +54,7 @@ This will:
 - Build the Debug configuration
 - Switch VS Code to the host debug launch configuration
 
-Then set your breeakpoints and press F5.
+Then set your breakpoints and press F5.
 
 ## Tools
 

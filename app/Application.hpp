@@ -9,6 +9,7 @@
 #include "app/Command.hpp"
 #include "app/MessageTypes.hpp"
 #include "imu/Mpu6050Driver.hpp"
+#include "led/RecordingLed.hpp"
 #include "rtos/EventFlags.h"
 #include "rtos/Mail.h"
 #include "rtos/Thread.h"
@@ -44,6 +45,11 @@ public:
   Application &operator=(Application &&) = delete;
 
   /**
+   * @brief Initialize and configure IMU hardware.
+   */
+  void bringUpHardware() noexcept;
+
+  /**
    * @brief Start worker threads and block forever.
    */
   [[noreturn]] void run() noexcept;
@@ -53,11 +59,6 @@ public:
    * @return IMU health snapshot.
    */
   message_types::ImuHealthSnapshot getImuHealthSnapshot() const noexcept;
-
-  /**
-   * @brief Thread implementing a watchdog for IMU data silence.
-   */
-  void watchdogThread();
 
 private:
   /**
@@ -127,6 +128,11 @@ private:
   void ledManagerThread();
 
   /**
+   * @brief Thread implementing a watchdog for IMU data silence.
+   */
+  void watchdogThread();
+
+  /**
    * @brief Log IMU event.
    * @param type Event type.
    * @param result Result.
@@ -148,6 +154,7 @@ private:
   signal_processing::SignalProcessor _signalProcessor;
   step_detection::StepDetector _stepDetector;
   session::SessionManager _sessionManager;
+  led::RecordingLed _recordingLed{};
 
   // Single-writer (IMU thread only), lock-free ring buffer for IMU events.
   message_types::ImuEvent _imuEventLog[Config::IMU_EVENT_LOG_SIZE]{};
@@ -177,7 +184,7 @@ private:
   std::atomic<uint32_t> _stepDropCount{0};
   std::atomic<uint32_t> _sessionDropCount{0};
   std::atomic<uint32_t> _usbDropCount{0};
-  std::atomic<uint8_t> _ledState{0};
+  std::atomic<led::LedState> _ledState{led::LedState::Idle};
 
   rtos::Thread _imuThread;
   rtos::Thread _signalThread;

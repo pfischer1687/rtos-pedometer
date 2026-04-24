@@ -66,6 +66,17 @@ Application::Application(imu::Mpu6050Driver &imu,
 
   step_detection::StepDetectorConfig stepCfg{};
   _stepDetector.setConfig(stepCfg);
+
+  _recordingLed.apply(led::LedState::Idle);
+}
+
+void Application::bringUpHardware() noexcept {
+  MBED_ASSERT(platform::isOk(_imu.init()));
+
+  imu::ImuConfig config{};
+  MBED_ASSERT(platform::isOk(_imu.configure(config)));
+
+  MBED_ASSERT(platform::isOk(_imu.startSampling()));
 }
 
 void Application::logImuEvent(message_types::ImuEventType type,
@@ -256,9 +267,14 @@ void Application::sessionManagerThread() {
       _sessionToUsbMail.put(out.releaseMsg());
     }
 
-    const uint8_t ledState = _sessionManager.isActive() ? 1u : 0u;
-    _ledState.store(ledState, std::memory_order_relaxed);
-    _sessionToLedFlags.set(Config::EVENT_LED_UPDATE);
+    const led::LedState newState = _sessionManager.isActive()
+                                       ? led::LedState::Active
+                                       : led::LedState::Idle;
+    const led::LedState prev = _ledState.load(std::memory_order_relaxed);
+    if (newState != prev) {
+      _ledState.store(newState, std::memory_order_release);
+      _sessionToLedFlags.set(Config::EVENT_LED_UPDATE);
+    }
 
     message_types::StepDetectionEvent *rawInStep =
         _stepToSessionMail.try_get_for(SESSION_POLL_INTERVAL);
@@ -321,16 +337,15 @@ void Application::usbCommandThread() {
 }
 
 void Application::ledManagerThread() {
-  for (;;) {
+  while (true) {
     const uint32_t w = _sessionToLedFlags.wait_any_for(
         Config::EVENT_LED_UPDATE, rtos::Kernel::wait_for_u32_forever, true);
     if ((w & osFlagsError) != 0u) {
       continue;
     }
-    (void)w;
-    uint8_t ledState = _ledState.load(std::memory_order_relaxed);
-    (void)ledState;
-    // TODO: drive board LEDs via a future hal::ILed when wired.
+
+    const led::LedState state = _ledState.load(std::memory_order_acquire);
+    _recordingLed.apply(state);
   }
 }
 
@@ -394,6 +409,7 @@ void Application::startThreads() noexcept {
 }
 
 [[noreturn]] void Application::run() noexcept {
+  bringUpHardware();
   startThreads();
 
   while (true) {

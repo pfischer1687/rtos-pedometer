@@ -14,13 +14,13 @@ namespace entry {
 
 namespace {
 
-constexpr uint8_t kImuI2cAddr7Bit = 0x68u;
+constexpr uint8_t IMU_I2C_ADDR_7_BIT = 0x68u;
 
 } // namespace
 
 [[noreturn]] int firmware_entry() {
   static imu::Mpu6050Driver imu(platform::i2c(), platform::timer(),
-                                kImuI2cAddr7Bit);
+                                IMU_I2C_ADDR_7_BIT);
   imu.attachDataReadyInput(platform::dataReadyInput());
 
   static app::Application application(imu, platform::watchdog());

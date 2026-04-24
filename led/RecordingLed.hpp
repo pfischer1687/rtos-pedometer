@@ -3,33 +3,33 @@
  * @brief Recording status LED (on-board red LED).
  *
  * @details
- * Indicates whether IMU data recording is active.
+ * Indicates whether step counting is active.
  */
 
 #ifndef LED_RECORDING_LED_HPP
 #define LED_RECORDING_LED_HPP
 
-#include "platform/Platform.hpp"
+#include <cstdint>
 
 namespace led {
 
+/**
+ * @brief Visual state for the recording LED.
+ */
+enum class LedState : uint8_t { Idle, Active };
+
+/**
+ * @brief Recording LED.
+ */
 class RecordingLed {
 public:
   RecordingLed() = default;
 
   /**
-   * @brief Initialize GPIO for the recording LED.
+   * @brief Apply a snapshot of application LED state to the GPIO sink.
+   * @param state Value read from LED thread only.
    */
-  platform::Result init();
-
-  /**
-   * @brief Turn recording indication on or off.
-   *
-   * @param active true = recording, false = idle
-   *
-   * @return Result
-   */
-  void setRecording(bool active);
+  void apply(LedState state) noexcept;
 };
 
 } // namespace led
