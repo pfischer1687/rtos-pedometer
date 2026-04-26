@@ -24,6 +24,16 @@
 namespace app {
 
 /**
+ * @enum ImuState
+ * @brief IMU health and recovery
+ * @details
+ * - watchdog single-owner
+ * - acquire thread is read-only
+ */
+enum class ImuState : std::uint8_t { Healthy, Stalled, Recovering, Warmup };
+
+/**
+ * @struct ImuSnapshot
  * @brief IMU snapshot.
  */
 struct ImuSnapshot {
@@ -35,6 +45,7 @@ struct ImuSnapshot {
 };
 
 /**
+ * @struct WatchdogSnapshot
  * @brief Watchdog snapshot.
  */
 struct WatchdogSnapshot {
@@ -234,6 +245,13 @@ private:
    */
   [[nodiscard]] WatchdogSnapshot evaluateWatchdog(std::uint32_t now) noexcept;
 
+  /**
+   * @brief Handle IMU state.
+   * @param now Current time.
+   * @param s IMU state.
+   */
+  void handleImuState(std::uint32_t now, ImuState s) noexcept;
+
   imu::Mpu6050Driver &_imu;
   platform::IWatchdog &_watchdog;
   signal_processing::SignalProcessor _signalProcessor;
@@ -243,12 +261,12 @@ private:
 
   // Single-producer (IMU thread only), lock-free ring buffer for IMU events.
   message_types::ImuEvent _imuEventLog[Config::IMU_EVENT_LOG_SIZE]{};
-  std::atomic<uint32_t> _imuEventCount{0};
+  std::atomic<uint32_t> _imuEventCount{0u};
 
-  std::atomic<std::uint32_t> _wDogImuWindowStartUs{0};
-  std::atomic<std::uint32_t> _wDogImuWindowBaseDrops{0};
-  std::atomic<std::uint32_t> _wDogImuWindowBaseSeq{0};
-  std::atomic<std::uint32_t> _wDogImuSnapshotGen{0};
+  std::atomic<uint32_t> _wDogImuWindowStartUs{0u};
+  std::atomic<uint32_t> _wDogImuWindowBaseDrops{0u};
+  std::atomic<uint32_t> _wDogImuWindowBaseSeq{0u};
+  std::atomic<uint32_t> _wDogImuSnapshotGen{0u};
 
   ThreadStack<Config::IMU_THREAD_STACK_DEPTH> _stackImu{};
   ThreadStack<Config::SIGNAL_THREAD_STACK_DEPTH> _stackSignal{};
@@ -268,15 +286,21 @@ private:
   rtos::Mail<CommandId, Config::MAIL_DEPTH> _usbToSessionMail;
   rtos::Mail<message_types::UsbResponse, Config::MAIL_DEPTH> _sessionToUsbMail;
 
-  std::atomic<uint32_t> _imuSeq{0};
-  std::atomic<uint32_t> _imuDropCount{0};
-  std::atomic<uint32_t> _signalDropCount{0};
-  std::atomic<uint32_t> _stepDropCount{0};
-  std::atomic<uint32_t> _sessionDropCount{0};
-  std::atomic<uint32_t> _usbDropCount{0};
+  std::atomic<uint32_t> _imuSeq{0u};
+  std::atomic<uint32_t> _imuDropCount{0u};
+  std::atomic<uint32_t> _signalDropCount{0u};
+  std::atomic<uint32_t> _stepDropCount{0u};
+  std::atomic<uint32_t> _sessionDropCount{0u};
+  std::atomic<uint32_t> _usbDropCount{0u};
   std::atomic<led::LedState> _ledState{led::LedState::Idle};
-  std::atomic<uint32_t> _sessionHeartbeatUs{0};
-  std::atomic<uint32_t> _ledVersion{0};
+  std::atomic<uint32_t> _sessionHeartbeatUs{0u};
+  std::atomic<uint32_t> _ledVersion{0u};
+
+  std::atomic<uint32_t> _lastImuTickUs{0u};
+  std::atomic<ImuState> _imuState{ImuState::Healthy};
+  std::atomic<bool> _imuDriverInRecovery{false};
+  std::atomic<uint32_t> _imuRecoveryStartUs{0u};
+  std::atomic<uint32_t> _appBootTimeUs{0u};
 
   rtos::Thread _imuThread;
   rtos::Thread _signalThread;
@@ -285,8 +309,6 @@ private:
   rtos::Thread _usbThread;
   rtos::Thread _ledThread;
   rtos::Thread _watchdogThread;
-
-  std::atomic<uint32_t> _lastImuTickUs{0};
 };
 
 } // namespace app

@@ -5,13 +5,18 @@ detection on an STM32 Nucleo-F767ZI board with an MPU-6050 IMU.
 
 ## Features
 
-- Real-time IMU sampling via MPU-6050 interrupt pin (data-ready signals, I2C)
-- Digital signal processing pipeline with a high-pass IIR filter on accelerometer data
-- Step detection using a confidence threshold and peak detection algorithm
+- Deterministic real-time IMU acquisition pipeline (MPU-6050 over I2C with data-ready interrupt driven sampling)
+- Multi-stage signal processing pipeline:
+  - High-pass IIR filter to remove DC drift due to gravity
+  - Magnitude computation and smoothing
+  - Step feature extraction for downstream detection
+- Step detection via a peak detection algorithm and confidence scoring
+- Watchdog-supervised system health management
+  - Monitors IMU liveness, drop-rate anomalies, and session responsiveness
+  - Drives IMU recovery state transitions
 - Session management via USB interface
-- RTOS thread IPC via mail queues
-- LED-based state indication
-- Watchdog supervision
+- Dedicated RTOS threads with IPC via lock-free mail queues and event signals
+- LED state indication
 
 ## Hardware
 

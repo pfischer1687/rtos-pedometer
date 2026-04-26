@@ -35,11 +35,54 @@ constexpr rtos::Kernel::Clock::duration_u32 WATCHDOG_KICK_INTERVAL_MS{500u};
 constexpr rtos::Kernel::Clock::duration_u32 LED_BACKOFF_MAX_MS{32u};
 
 constexpr float MILLI_G_PER_G = 1000.0f;
-constexpr uint32_t WATCHDOG_TIMEOUT_MS = 2000;
-constexpr uint32_t WATCHDOG_MAX_IMU_SILENCE_US = 2'000'000u;
-constexpr uint32_t WATCHDOG_MAX_SESSION_SILENCE_US = 1'500'000u;
-constexpr uint32_t WATCHDOG_IMU_DROP_WINDOW_US = 10'000'000u;
+constexpr uint32_t WATCHDOG_TIMEOUT_MS = 2000;                   // 2s
+constexpr uint32_t WATCHDOG_MAX_IMU_SILENCE_US = 10'000'000u;    // 10s
+constexpr uint32_t WATCHDOG_MAX_SESSION_SILENCE_US = 5'000'000u; // 5s
+constexpr uint32_t WATCHDOG_IMU_DROP_WINDOW_US = 30'000'000u;    // 30s
+constexpr uint32_t IMU_THREAD_STALL_RECOVER_US = 2'000'000u;     // 2s
+constexpr std::uint32_t IMU_STALL_HYSTERESIS_US =
+    200'000u; // 200ms (Healthy <-> Stalled)
+constexpr std::uint32_t IMU_STALL_STALE_THRESHOLD_US =
+    IMU_THREAD_STALL_RECOVER_US + IMU_STALL_HYSTERESIS_US;
+constexpr std::uint32_t IMU_WARMUP_MIN_US = 300'000u; // 300ms
 constexpr uint32_t MAX_IMU_SNAPSHOT_ATTEMPTS = 8u;
+constexpr uint32_t INVERSE_DROP_RATE_FACTOR =
+    10u; // 1/10 -> drops > 10% of samples
+
+/**
+ * @brief Check if IMU I/O is allowed.
+ * @param s IMU state.
+ * @param inRecovery True if IMU is in recovery.
+ * @return True if IMU I/O is allowed, false otherwise.
+ * @details
+ * - Warmup is allowed only after Recovering has completed startSampling()
+ * - Flag blocks all I/O while the watchdog mutates the driver (Recovering)
+ */
+[[nodiscard]] inline bool isImuIoAllowed(const ImuState s,
+                                         const bool inRecovery) noexcept {
+  return (s == ImuState::Healthy || s == ImuState::Warmup) && !inRecovery;
+}
+
+/**
+ * @brief Whether a healthy IMU should be marked as stalled.
+ * @param now Current time.
+ * @param lastTickUs Last tick time.
+ * @param bootTimeUs Boot time.
+ * @return True if IMU should stall, false otherwise.
+ */
+[[nodiscard]] inline bool
+imuHealthyShouldStall(const std::uint32_t now, const std::uint32_t lastTickUs,
+                      const std::uint32_t bootTimeUs) noexcept {
+  if (bootTimeUs == 0u) {
+    return false;
+  }
+
+  if (lastTickUs == 0u) {
+    return platform::elapsed(bootTimeUs, now) > IMU_THREAD_STALL_RECOVER_US;
+  }
+
+  return platform::elapsed(lastTickUs, now) > IMU_STALL_STALE_THRESHOLD_US;
+}
 
 } // namespace
 
@@ -95,6 +138,12 @@ void Application::logImuEvent(message_types::ImuEventType type,
 }
 
 void Application::tryAcquireAndSendImuSample() noexcept {
+  const ImuState s = _imuState.load(std::memory_order_acquire);
+  const bool recovery = _imuDriverInRecovery.load(std::memory_order_acquire);
+  if (!isImuIoAllowed(s, recovery)) {
+    return;
+  }
+
   MailHandle<message_types::RawImuDataFrame, Config::MAIL_DEPTH> mailHandle{
       _sensorToSignalMail};
   if (!mailHandle) [[unlikely]] {
@@ -121,18 +170,16 @@ void Application::tryAcquireAndSendImuSample() noexcept {
   msg->sequence = _imuSeq.fetch_add(1, std::memory_order_relaxed);
   msg->sample = sample;
 
-  _lastImuTickUs.store(sample.timestampUs, std::memory_order_relaxed);
-  _sensorToSignalMail.put(mailHandle.releaseMsg());
+  if (_sensorToSignalMail.put(mailHandle.releaseMsg()) == osOK) {
+    const std::uint32_t t = platform::getTimeUs();
+    _lastImuTickUs.store(t, std::memory_order_release);
+  }
 }
 
 void Application::imuDataAcquisitionThread() {
   while (true) {
-    if (!_imu.consumeDataReady()) {
-      rtos::ThisThread::sleep_for(IMU_DATA_NOT_READY_BACKOFF_MS);
-      continue;
-    }
-
     tryAcquireAndSendImuSample();
+    rtos::ThisThread::sleep_for(IMU_DATA_NOT_READY_BACKOFF_MS);
   }
 }
 
@@ -354,7 +401,7 @@ void Application::sessionManagerThread() {
     }
 
     if (!waitOnSessionWakeup()) {
-      break;
+      continue;
     }
 
     if (drain_once()) {
@@ -379,6 +426,7 @@ void Application::usbCommandThread() {
           _sessionToUsbMail, resp};
       message_types::UsbResponse *inMsg = inSess.getMsg();
       iface.sendResponse(inMsg->msg);
+      iface.printPrompt();
     }
 
     if (!iface.poll(lineBuf, sizeof(lineBuf))) {
@@ -460,7 +508,7 @@ Application::getImuHealthSnapshot() const noexcept {
 
 bool Application::isImuLive(const std::uint32_t now) const noexcept {
   const std::uint32_t lastImuUs =
-      _lastImuTickUs.load(std::memory_order_relaxed);
+      _lastImuTickUs.load(std::memory_order_acquire);
   const std::uint32_t imuSilenceUs = platform::elapsed(lastImuUs, now);
   return (imuSilenceUs <= WATCHDOG_MAX_IMU_SILENCE_US);
 }
@@ -530,7 +578,7 @@ bool Application::isImuDropRateOk(const ImuSnapshot &s,
   if (wSampleDelta == 0U) {
     return (wDrops == 0U);
   }
-  return (static_cast<std::uint64_t>(wDrops) * 2U <
+  return (static_cast<std::uint64_t>(wDrops) * INVERSE_DROP_RATE_FACTOR <
           static_cast<std::uint64_t>(wSampleDelta));
 }
 
@@ -543,11 +591,72 @@ Application::evaluateWatchdog(const std::uint32_t now) noexcept {
   return w;
 }
 
+void Application::handleImuState(std::uint32_t now, ImuState s) noexcept {
+  switch (s) {
+
+  case ImuState::Healthy: {
+    const std::uint32_t last = _lastImuTickUs.load(std::memory_order_acquire);
+    const std::uint32_t tBoot = _appBootTimeUs.load(std::memory_order_relaxed);
+
+    if (imuHealthyShouldStall(now, last, tBoot)) {
+      _imuState.store(ImuState::Stalled, std::memory_order_release);
+    }
+
+    break;
+  }
+
+  case ImuState::Stalled:
+    _imuDriverInRecovery.store(true, std::memory_order_release);
+    _imuState.store(ImuState::Recovering, std::memory_order_release);
+    break;
+
+  case ImuState::Recovering: {
+    (void)platform::isOk(_imu.stopSampling());
+
+    if (!platform::isOk(_imu.reset()) || !platform::isOk(_imu.init())) {
+      _imuDriverInRecovery.store(false, std::memory_order_release);
+      _imuState.store(ImuState::Stalled, std::memory_order_release);
+      break;
+    }
+
+    const imu::ImuConfig cfg = _imu.getImuConfig();
+    if (!platform::isOk(_imu.configure(cfg)) ||
+        !platform::isOk(_imu.startSampling())) {
+      _imuDriverInRecovery.store(false, std::memory_order_release);
+      _imuState.store(ImuState::Stalled, std::memory_order_release);
+      break;
+    }
+
+    _imuRecoveryStartUs.store(platform::getTimeUs(), std::memory_order_release);
+    _imuState.store(ImuState::Warmup, std::memory_order_release);
+    _imuDriverInRecovery.store(false, std::memory_order_release);
+    break;
+  }
+
+  case ImuState::Warmup: {
+    const std::uint32_t tWarm0 =
+        _imuRecoveryStartUs.load(std::memory_order_acquire);
+
+    if (platform::elapsed(tWarm0, now) >= IMU_WARMUP_MIN_US) {
+      _imuState.store(ImuState::Healthy, std::memory_order_release);
+      _lastImuTickUs.store(platform::getTimeUs(), std::memory_order_release);
+    }
+    break;
+  }
+
+  default:
+    break;
+  }
+}
+
 void Application::watchdogThread() {
   MBED_ASSERT(platform::isOk(_watchdog.start(WATCHDOG_TIMEOUT_MS)));
 
   while (true) {
     const std::uint32_t now = platform::getTimeUs();
+    const ImuState s = _imuState.load(std::memory_order_acquire);
+    handleImuState(now, s);
+
     const WatchdogSnapshot snap = evaluateWatchdog(now);
     if (snap.imuLive && snap.imuDropsOk && snap.sessionOk) [[likely]] {
       _watchdog.kick();
@@ -557,6 +666,7 @@ void Application::watchdogThread() {
 }
 
 void Application::startThreads() noexcept {
+  _appBootTimeUs.store(platform::getTimeUs(), std::memory_order_release);
   _sessionHeartbeatUs.store(platform::getTimeUs(), std::memory_order_relaxed);
 
   osStatus s =
