@@ -12,7 +12,7 @@ detection on an STM32 Nucleo-F767ZI board with an MPU-6050 IMU.
   - Step feature extraction for downstream detection
 - Step detection via a peak detection algorithm and confidence scoring
 - Watchdog-supervised system health management
-  - Monitors IMU liveness, drop-rate anomalies, and session responsiveness
+  - Monitors IMU liveness and session responsiveness
   - Drives IMU recovery state transitions
 - Session management via USB interface
 - Dedicated RTOS threads with IPC via lock-free mail queues and event signals

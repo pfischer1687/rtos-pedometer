@@ -30,29 +30,7 @@ namespace app {
  * - watchdog single-owner
  * - acquire thread is read-only
  */
-enum class ImuState : std::uint8_t { Healthy, Stalled, Recovering, Warmup };
-
-/**
- * @struct ImuSnapshot
- * @brief IMU snapshot.
- */
-struct ImuSnapshot {
-  std::uint32_t totalDrops{};
-  std::uint32_t totalSeq{};
-  std::uint32_t windowStart{};
-  std::uint32_t baseDrops{};
-  std::uint32_t baseSeq{};
-};
-
-/**
- * @struct WatchdogSnapshot
- * @brief Watchdog snapshot.
- */
-struct WatchdogSnapshot {
-  bool imuLive{};
-  bool imuDropsOk{};
-  bool sessionOk{};
-};
+enum class ImuState : std::uint8_t { Healthy, Recovering };
 
 /**
  * @class Application
@@ -225,27 +203,6 @@ private:
   [[nodiscard]] bool isSessionHealthy(std::uint32_t now) const noexcept;
 
   /**
-   * @brief Read IMU snapshot.
-   * @return IMU snapshot.
-   */
-  [[nodiscard]] ImuSnapshot readImuSnapshot() const noexcept;
-
-  /**
-   * @brief Check if IMU drop rate is ok.
-   * @param s IMU snapshot.
-   * @param now Current time.
-   * @return True if IMU drop rate is ok, false otherwise.
-   */
-  [[nodiscard]] bool isImuDropRateOk(const ImuSnapshot &s,
-                                     std::uint32_t now) noexcept;
-  /**
-   * @brief Evaluate watchdog.
-   * @param now Current time.
-   * @return Watchdog snapshot.
-   */
-  [[nodiscard]] WatchdogSnapshot evaluateWatchdog(std::uint32_t now) noexcept;
-
-  /**
    * @brief Handle IMU state.
    * @param now Current time.
    * @param s IMU state.
@@ -262,11 +219,6 @@ private:
   // Single-producer (IMU thread only), lock-free ring buffer for IMU events.
   message_types::ImuEvent _imuEventLog[Config::IMU_EVENT_LOG_SIZE]{};
   std::atomic<uint32_t> _imuEventCount{0u};
-
-  std::atomic<uint32_t> _wDogImuWindowStartUs{0u};
-  std::atomic<uint32_t> _wDogImuWindowBaseDrops{0u};
-  std::atomic<uint32_t> _wDogImuWindowBaseSeq{0u};
-  std::atomic<uint32_t> _wDogImuSnapshotGen{0u};
 
   ThreadStack<Config::IMU_THREAD_STACK_DEPTH> _stackImu{};
   ThreadStack<Config::SIGNAL_THREAD_STACK_DEPTH> _stackSignal{};
@@ -298,9 +250,6 @@ private:
 
   std::atomic<uint32_t> _lastImuTickUs{0u};
   std::atomic<ImuState> _imuState{ImuState::Healthy};
-  std::atomic<bool> _imuDriverInRecovery{false};
-  std::atomic<uint32_t> _imuRecoveryStartUs{0u};
-  std::atomic<uint32_t> _appBootTimeUs{0u};
 
   rtos::Thread _imuThread;
   rtos::Thread _signalThread;
