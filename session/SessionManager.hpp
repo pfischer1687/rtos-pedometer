@@ -44,8 +44,14 @@ struct SessionMetrics {
  * tuning sessions.
  */
 struct SessionDebugStats {
+  /** Diagnostic mirror of SessionMetrics::stepCount (not authoritative). */
   uint32_t acceptedStepCount{0};
-  uint32_t rejectedStepCount{0};
+  /** Diagnostic mirror of SessionMetrics::stepCount (not authoritative). */
+  uint32_t stepsReceived{0};
+  /** Reserved for future drop accounting; expected 0 with current pipeline. */
+  uint32_t stepsDropped{0};
+  /** Incremented when startSession() performs a full metrics reset (Idle→Active). */
+  uint32_t sessionResets{0};
   step_detection::StepDetectorDebugStats detectorStats{};
 };
 
@@ -69,9 +75,10 @@ public:
   SessionManager() noexcept = default;
 
   /**
-   * @brief Begin step counting session (Idle → Active). Fails if not Idle.
+   * @brief Start recording (Idle → Active), resetting step metrics once; if
+   * already Active, is a no-op (preserves monotonic step count).
    * @param startTimestampUs Session start timestamp.
-   * @return True if session started successfully, false otherwise.
+   * @return Always true.
    */
   [[nodiscard]] bool startSession(platform::TickUs startTimestampUs) noexcept;
 
@@ -87,6 +94,8 @@ public:
   /**
    * @brief Handler for step detection events.
    * @param event Step detection event.
+   * @note Single ingestion path: only from Application::handleStepEventsUpTo
+   * (mail queue drain), not from the step detector thread directly.
    */
   void onStep(const step_detection::StepEvent &event) noexcept;
 
@@ -113,6 +122,11 @@ public:
    * @return Step count.
    */
   [[nodiscard]] uint32_t getStepCount() const noexcept;
+
+  /**
+   * @brief Ingress count: step events passed to \c onStep (mirrors \c getStepCount).
+   */
+  [[nodiscard]] uint32_t getStepsReceived() const noexcept;
 
   /**
    * @brief Check if the session is active.
@@ -145,9 +159,16 @@ public:
                                               std::size_t size) const noexcept;
 
 private:
+  static constexpr platform::TickUs MIN_STEP_INTERVAL_US = 350'000u;
+  // Invariant: _metrics.stepCount is the single source of truth.
+  // _debug step fields are mirrors for diagnostics only.
+  void resetMetricsForNewSession(platform::TickUs startTimestampUs) noexcept;
+
   mutable rtos::Mutex _mutex{};
   SessionMetrics _metrics{};
   SessionDebugStats _debug{};
+  bool _haveLastAcceptedStep{false};
+  platform::TickUs _lastAcceptedStepTimeUs{0u};
 };
 
 } // namespace session

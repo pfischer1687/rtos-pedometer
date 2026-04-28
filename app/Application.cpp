@@ -50,7 +50,7 @@ Application::Application(imu::Mpu6050Driver &imu,
                     _stackSignal.data, "sig_proc"),
       _stepThread(osPriorityHigh, Config::STEP_THREAD_STACK_DEPTH,
                   _stackStep.data, "step_det"),
-      _sessionThread(osPriorityBelowNormal, Config::SESSION_THREAD_STACK_DEPTH,
+      _sessionThread(osPriorityHigh, Config::SESSION_THREAD_STACK_DEPTH,
                      _stackSession.data, "session"),
       _usbThread(osPriorityLow, Config::USB_THREAD_STACK_DEPTH, _stackUsb.data,
                  "usb_cmd"),
@@ -182,19 +182,19 @@ void Application::stepDetectionThread() {
         static_cast<float>(inMsg->accelMagnitudeMilliG) / MILLI_G_PER_G;
     const step_detection::StepDecision decision =
         _stepDetector.processSample(magG, inMsg->sourceTimestampUs);
+    // Only detector output gate: no confidence or session filtering here.
     if (!decision.event) {
       continue;
     }
+    // Step events are always queued; SessionManager decides whether to accept
+    // them.
 
-    MailHandle<message_types::StepDetectionEvent, Config::MAIL_DEPTH> out{
-        _stepToSessionMail};
-    if (!out) [[unlikely]] {
-      _stepDropCount.fetch_add(1, std::memory_order_relaxed);
-      continue;
+    // Blocking alloc: no StepEvent may be dropped for lack of mail/pool space.
+    message_types::StepDetectionEvent *outMsg = _stepToSessionMail.try_alloc_for(
+        rtos::Kernel::wait_for_u32_forever);
+    if (outMsg == nullptr) {
+      MBED_ASSERT(false && "StepEvent mail alloc should not fail (blocking)");
     }
-
-    message_types::StepDetectionEvent *outMsg = out.getMsg();
-
     // NOTE: sequence corresponds to triggering sample (_m2), not peak sample
     // (_m1)
     outMsg->sequence = inMsg->sequence;
@@ -202,7 +202,11 @@ void Application::stepDetectionThread() {
     outMsg->peakTimeUs = decision.event->timestampUs;
     outMsg->confidence = decision.event->confidence;
 
-    _stepToSessionMail.put(out.releaseMsg());
+    if (_stepToSessionMail.full()) {
+      MBED_ASSERT(false && "StepEvent queue overflow");
+    }
+    const osStatus putSt = _stepToSessionMail.put(outMsg);
+    MBED_ASSERT(putSt == osOK);
     _sessionSignal.set(Config::EVENT_STEP_WAKE_SESSION);
   }
 }
@@ -251,8 +255,11 @@ Application::handleUsbCommandsUpTo(const std::uint32_t max) noexcept {
 
     switch (*inUsb.getMsg()) {
     case CommandId::Start: {
-      const bool ok = _sessionManager.startSession(platform::getTimeUs());
-      writeUsbResponse(ok ? "OK" : "FAIL", out.getMsg());
+      flushPendingStepEvents();
+      (void)_sessionManager.startSession(platform::getTimeUs());
+      MBED_ASSERT(_sessionManager.isActive());
+      _stepEventsIngestedLifetime = _sessionManager.getStepsReceived();
+      writeUsbResponse("OK", out.getMsg());
       break;
     }
     case CommandId::Stop: {
@@ -281,10 +288,13 @@ Application::handleUsbCommandsUpTo(const std::uint32_t max) noexcept {
       writeUsbResponse(text, out.getMsg());
       break;
     }
+    // Only explicit USB Reset stops the session and clears debug — no automatic
+    // session reset in the motion pipeline.
     case CommandId::Reset:
       _imuDropCount.store(0, std::memory_order_release);
       _imuSeq.store(0, std::memory_order_release);
       _imuEventCount.store(0, std::memory_order_release);
+      flushPendingStepEvents();
       _sessionManager.resetDebugStats();
       _stepDetector.resetDebugStats();
       (void)_sessionManager.stopSession(platform::getTimeUs());
@@ -312,6 +322,10 @@ void Application::updateSessionStateAndLED() noexcept {
 
 std::uint32_t
 Application::handleStepEventsUpTo(const std::uint32_t max) noexcept {
+  // single ingestion path: step mail queue only (SessionManager::onStep not
+  // called from stepDetectionThread).
+  const std::uint32_t ingressBefore = _sessionManager.getStepsReceived();
+  const std::uint32_t stepsBefore = _sessionManager.getStepCount();
   std::uint32_t n = 0u;
   for (; n < max; ++n) {
     message_types::StepDetectionEvent *rawInStep = _stepToSessionMail.try_get();
@@ -321,13 +335,31 @@ Application::handleStepEventsUpTo(const std::uint32_t max) noexcept {
     MailHandle<message_types::StepDetectionEvent, Config::MAIL_DEPTH> inStep{
         _stepToSessionMail, rawInStep};
     message_types::StepDetectionEvent *inMsgStep = inStep.getMsg();
-
     step_detection::StepEvent evt{};
     evt.timestampUs = inMsgStep->peakTimeUs;
     evt.confidence = inMsgStep->confidence;
     _sessionManager.onStep(evt);
+    ++_stepEventsIngestedLifetime;
+    MBED_ASSERT(_stepEventsIngestedLifetime ==
+                _sessionManager.getStepsReceived());
+  }
+  if (n != 0u) {
+    MBED_ASSERT(_sessionManager.getStepsReceived() == ingressBefore + n);
+    MBED_ASSERT(_sessionManager.getStepCount() >= stepsBefore);
+    MBED_ASSERT(_sessionManager.getStepCount() <= stepsBefore + n);
   }
   return n;
+}
+
+void Application::flushPendingStepEvents() noexcept {
+  while (true) {
+    message_types::StepDetectionEvent *raw = _stepToSessionMail.try_get();
+    if (raw == nullptr) {
+      break;
+    }
+    MailHandle<message_types::StepDetectionEvent, Config::MAIL_DEPTH> in{
+        _stepToSessionMail, raw};
+  }
 }
 
 void Application::sessionManagerThread() {
