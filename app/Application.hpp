@@ -184,11 +184,6 @@ private:
   std::uint32_t handleStepEventsUpTo(std::uint32_t max) noexcept;
 
   /**
-   * @brief Drain all pending step->session mails.
-   */
-  void flushPendingStepEvents() noexcept;
-
-  /**
    * @brief Update session state and LED.
    */
   void updateSessionStateAndLED() noexcept;
@@ -247,8 +242,6 @@ private:
   std::atomic<uint32_t> _imuDropCount{0u};
   std::atomic<uint32_t> _signalDropCount{0u};
   std::atomic<uint32_t> _stepDropCount{0u};
-  /// Temporary debug: dequeued step mails; must match \c SessionManager::getStepCount().
-  std::uint32_t _stepEventsIngestedLifetime{0u};
   std::atomic<uint32_t> _sessionDropCount{0u};
   std::atomic<uint32_t> _usbDropCount{0u};
   std::atomic<led::LedState> _ledState{led::LedState::Idle};

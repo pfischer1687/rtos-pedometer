@@ -80,6 +80,7 @@ TEST(StepDetectorSynthetic, NoPeakOnFlatLine) {
   step_detection::StepDetectorConfig cfg{};
   cfg.warmupSamples = 0u;
   cfg.minStepIntervalMs = 10u;
+  cfg.minPeakProminenceG = 0.5f;
   det.setConfig(cfg);
 
   std::vector<float> mag(20u, 1.0f);
@@ -93,6 +94,9 @@ TEST(StepDetectorSynthetic, DetectsSinglePeak) {
   step_detection::StepDetectorConfig cfg{};
   cfg.warmupSamples = 0u;
   cfg.minStepIntervalMs = 100u;
+  cfg.minValleyProminenceG = 0.05f;
+  cfg.minPeakProminenceG = 0.05f;
+  cfg.slopeMin = 0.03f;
   cfg.baselineEmaAlpha = 0.2f;
   det.setConfig(cfg);
 
@@ -105,11 +109,14 @@ TEST(StepDetectorSynthetic, DetectsSinglePeak) {
   expectConfidenceBounded(events);
 }
 
-TEST(StepDetectorSynthetic, MinIntervalAllowsNearCadencePeaks) {
+TEST(StepDetectorSynthetic, MinIntervalSuppressesSecondPeak) {
   step_detection::StepDetector det;
   step_detection::StepDetectorConfig cfg{};
   cfg.warmupSamples = 0u;
   cfg.minStepIntervalMs = 50u;
+  cfg.minValleyProminenceG = 0.05f;
+  cfg.minPeakProminenceG = 0.05f;
+  cfg.slopeMin = 0.03f;
   cfg.baselineEmaAlpha = 0.2f;
   det.setConfig(cfg);
 
@@ -131,14 +138,8 @@ TEST(StepDetectorSynthetic, MinIntervalAllowsNearCadencePeaks) {
   };
 
   bump(0u);
-  // Pad until second bump is ≥ MIN_STEP_INTERVAL_US after the first emit.
-  platform::TickUs t = 4u * kDt;
-  for (unsigned i = 0u; i < 46u; ++i) {
-    t += kDt;
-    push(1.0f, t);
-  }
-  bump(t);
-  assertStepCount(events, 2u);
+  bump(static_cast<platform::TickUs>(4u * kDt));
+  assertStepCount(events, 1u);
 }
 
 TEST(StepDetectorSynthetic, ConstantMagnitudeHasNoPeaks) {
@@ -146,6 +147,8 @@ TEST(StepDetectorSynthetic, ConstantMagnitudeHasNoPeaks) {
   step_detection::StepDetectorConfig cfg{};
   cfg.warmupSamples = 0u;
   cfg.minStepIntervalMs = 10u;
+  cfg.minValleyProminenceG = 0.05f;
+  cfg.minPeakProminenceG = 0.05f;
   det.setConfig(cfg);
 
   constexpr platform::TickUs kShortPeriod = 5000u;
@@ -159,6 +162,9 @@ TEST(StepDetectorSynthetic, ResetRestartsStepIndex) {
   step_detection::StepDetectorConfig cfg{};
   cfg.warmupSamples = 0u;
   cfg.minStepIntervalMs = 100u;
+  cfg.minValleyProminenceG = 0.05f;
+  cfg.minPeakProminenceG = 0.05f;
+  cfg.slopeMin = 0.03f;
   cfg.baselineEmaAlpha = 0.2f;
   det.setConfig(cfg);
 
@@ -179,18 +185,21 @@ TEST(StepDetectorSynthetic, ResetRestartsStepIndex) {
   expectConfidenceBounded(secondRun);
 }
 
-TEST(StepDetectorSynthetic, SoftBumpRegistersWithoutSlopeGate) {
+TEST(StepDetectorSynthetic, SlopeRejectsSoftBump) {
   step_detection::StepDetector det;
   step_detection::StepDetectorConfig cfg{};
   cfg.warmupSamples = 0u;
   cfg.minStepIntervalMs = 50u;
+  cfg.minValleyProminenceG = 0.02f;
+  cfg.minPeakProminenceG = 0.02f;
+  cfg.slopeMin = 0.08f;
   cfg.baselineEmaAlpha = 0.15f;
   det.setConfig(cfg);
 
   const std::vector<float> mag = {1.0f, 1.0f, 1.0f, 1.04f, 1.08f, 1.04f, 1.0f};
   const auto events =
       collectEventsFromMagnitudes(det, mag, 0u, kSamplePeriodUs);
-  assertStepCount(events, 1u);
+  assertStepCount(events, 0u);
 }
 
 TEST(StepDetectorSynthetic, StableWalkingTrainMaintainsCount) {
@@ -198,12 +207,14 @@ TEST(StepDetectorSynthetic, StableWalkingTrainMaintainsCount) {
   step_detection::StepDetectorConfig cfg{};
   cfg.warmupSamples = 0u;
   cfg.minStepIntervalMs = 100u;
+  cfg.minValleyProminenceG = 0.08f;
+  cfg.minPeakProminenceG = 0.08f;
+  cfg.slopeMin = 0.04f;
   cfg.baselineEmaAlpha = 0.08f;
   det.setConfig(cfg);
 
   constexpr platform::TickUs kDt = kSamplePeriodUs;
-  /// Spacing between stride bases; emit ~base+4*kDt must be ≥MIN_STEP_INTERVAL_US apart.
-  constexpr uint32_t kStrideUs = 550000u;
+  constexpr uint32_t kStrideUs = 120000u;
   std::vector<step_detection::StepEvent> events;
 
   auto bumpAt = [&](platform::TickUs base) {
@@ -231,17 +242,20 @@ TEST(StepDetectorSynthetic, StableWalkingTrainMaintainsCount) {
   expectConfidenceBounded(events);
 }
 
-TEST(StepDetectorSynthetic, AsymmetricPeakCanPassWithoutSlopeGate) {
+TEST(StepDetectorSynthetic, AsymmetricPeakFailsSlope) {
   step_detection::StepDetector det;
   step_detection::StepDetectorConfig cfg{};
   cfg.warmupSamples = 0u;
   cfg.minStepIntervalMs = 50u;
+  cfg.minValleyProminenceG = 0.05f;
+  cfg.minPeakProminenceG = 0.05f;
+  cfg.slopeMin = 0.04f;
   det.setConfig(cfg);
 
   const std::vector<float> mag = {1.0f, 1.0f, 1.0f, 1.4f, 1.5f, 1.49f, 1.0f};
   const auto events =
       collectEventsFromMagnitudes(det, mag, 0u, kSamplePeriodUs);
-  assertStepCount(events, 1u);
+  assertStepCount(events, 0u);
 }
 
 TEST(StepDetectorSynthetic, LongGapStillRegistersStep) {
@@ -249,6 +263,9 @@ TEST(StepDetectorSynthetic, LongGapStillRegistersStep) {
   step_detection::StepDetectorConfig cfg{};
   cfg.warmupSamples = 0u;
   cfg.minStepIntervalMs = 200u;
+  cfg.minValleyProminenceG = 0.08f;
+  cfg.minPeakProminenceG = 0.08f;
+  cfg.slopeMin = 0.04f;
   det.setConfig(cfg);
 
   constexpr platform::TickUs kDt = kSamplePeriodUs;
@@ -283,37 +300,36 @@ TEST(StepDetectorSynthetic, ManyStepsWithSlowDriftStillDetected) {
   step_detection::StepDetectorConfig cfg{};
   cfg.warmupSamples = 0u;
   cfg.minStepIntervalMs = 90u;
+  cfg.minValleyProminenceG = 0.10f;
+  cfg.minPeakProminenceG = 0.08f;
+  cfg.slopeMin = 0.04f;
   cfg.baselineEmaAlpha = 0.06f;
   det.setConfig(cfg);
 
   constexpr platform::TickUs kDt = 5000u;
-  /// Pads so consecutive emits are ≥ MIN_STEP_INTERVAL_US apart (95 * 5 ms = 475 ms).
-  constexpr uint32_t kInterStridePadSamples = 95u;
+  constexpr uint32_t kStrideUs = 100000u;
   float drift = 0.0f;
   std::vector<step_detection::StepEvent> events;
-  platform::TickUs t = 0u;
 
   for (unsigned n = 0u; n < 25u; ++n) {
     const float o = drift;
-    (void)det.processSample(magSample(1.0f + o, t));
-    t += kDt;
-    (void)det.processSample(magSample(1.0f + o, t));
-    t += kDt;
-    (void)det.processSample(magSample(1.0f + o, t));
-    t += kDt;
-    (void)det.processSample(magSample(1.4f + o, t));
-    t += kDt;
-    if (const auto e = det.processSample(magSample(1.0f + o, t)).event) {
+    const platform::TickUs b = static_cast<platform::TickUs>(n * kStrideUs);
+    (void)det.processSample(magSample(1.0f + o, b));
+    (void)det.processSample(
+        magSample(1.0f + o, static_cast<platform::TickUs>(b + kDt)));
+    (void)det.processSample(
+        magSample(1.0f + o, static_cast<platform::TickUs>(b + 2u * kDt)));
+    (void)det.processSample(
+        magSample(1.4f + o, static_cast<platform::TickUs>(b + 3u * kDt)));
+    if (const auto e =
+            det.processSample(magSample(1.0f + o, static_cast<platform::TickUs>(
+                                                      b + 4u * kDt)))
+                .event) {
       events.push_back(*e);
-    }
-    t += kDt;
-    for (unsigned p = 0u; p < kInterStridePadSamples; ++p) {
-      (void)det.processSample(magSample(1.0f + o, t));
-      t += kDt;
     }
     drift += 0.012f;
   }
-  EXPECT_GE(events.size(), 25u);
+  assertStepCount(events, 25u);
   assertMonotonicTimestamps(events);
   assertStrictlyIncreasingStepIndex(events);
 }
@@ -323,6 +339,9 @@ TEST(StepDetectorSynthetic, WarmupSuppressesStepsUntilDone) {
   step_detection::StepDetectorConfig cfg{};
   cfg.warmupSamples = 30u;
   cfg.minStepIntervalMs = 100u;
+  cfg.minValleyProminenceG = 0.05f;
+  cfg.minPeakProminenceG = 0.05f;
+  cfg.slopeMin = 0.03f;
   cfg.baselineEmaAlpha = 0.2f;
   det.setConfig(cfg);
 
@@ -349,6 +368,9 @@ TEST(StepDetectorSynthetic, SinglePeakToleratesDeterministicJitter) {
   step_detection::StepDetectorConfig cfg{};
   cfg.warmupSamples = 0u;
   cfg.minStepIntervalMs = 100u;
+  cfg.minValleyProminenceG = 0.04f;
+  cfg.minPeakProminenceG = 0.04f;
+  cfg.slopeMin = 0.025f;
   cfg.baselineEmaAlpha = 0.18f;
   det.setConfig(cfg);
 

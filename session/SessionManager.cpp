@@ -11,8 +11,18 @@ namespace session {
 namespace {
 
 static constexpr platform::TickUs US_PER_MS = 1000u;
+static constexpr float CONFIDENCE_THRESHOLD = 0.5f;
 static constexpr float CALORIES_PER_STEP = 0.04f;
 static constexpr float METERS_PER_STEP = 0.762f;
+
+/**
+ * @brief Check if the session is idle.
+ * @param s Session state.
+ * @return True if the session is idle, false otherwise.
+ */
+[[nodiscard]] constexpr bool isIdle(SessionState s) noexcept {
+  return s == SessionState::Idle;
+}
 
 /**
  * @brief Check if the session is active.
@@ -24,6 +34,15 @@ static constexpr float METERS_PER_STEP = 0.762f;
 }
 
 /**
+ * @brief Check if the session can be started.
+ * @param state Session state.
+ * @return True if the session can be started, false otherwise.
+ */
+[[nodiscard]] constexpr bool canStartSession(SessionState state) noexcept {
+  return isIdle(state);
+}
+
+/**
  * @brief Check if the session can be stopped.
  * @param state Session state.
  * @return True if the session can be stopped, false otherwise.
@@ -32,28 +51,29 @@ static constexpr float METERS_PER_STEP = 0.762f;
   return isActive(state);
 }
 
-} // anonymous namespace
-
-void SessionManager::resetMetricsForNewSession(
-    platform::TickUs startTimestampUs) noexcept {
-  _metrics.state = SessionState::Active;
-  _metrics.stepCount = 0u;
-  _metrics.startTimestampUs = startTimestampUs;
-  _metrics.endTimestampUs = 0u;
-  _debug.stepsReceived = 0u;
-  _debug.acceptedStepCount = 0u;
-  _debug.stepsDropped = 0u;
-  _haveLastAcceptedStep = false;
-  _lastAcceptedStepTimeUs = 0u;
+/**
+ * @brief Reset the session metrics for a new session and set the state to
+ * active.
+ * @param m Session metrics.
+ * @param startUs Session start timestamp.
+ */
+void resetMetricsForNewSession(SessionMetrics &m,
+                               platform::TickUs startUs) noexcept {
+  m.state = SessionState::Active;
+  m.stepCount = 0u;
+  m.startTimestampUs = startUs;
+  m.endTimestampUs = 0u;
 }
+
+} // anonymous namespace
 
 bool SessionManager::startSession(platform::TickUs startTimestampUs) noexcept {
   rtos::ScopedMutexLock lock(_mutex);
-  if (_metrics.state == SessionState::Active) {
-    return true;
+  if (!canStartSession(_metrics.state)) {
+    return false;
   }
-  resetMetricsForNewSession(startTimestampUs);
-  ++_debug.sessionResets;
+
+  resetMetricsForNewSession(_metrics, startTimestampUs);
   return true;
 }
 
@@ -68,24 +88,20 @@ bool SessionManager::stopSession(platform::TickUs stopTimestampUs) noexcept {
   return true;
 }
 
-// Only application path: Application::handleStepEventsUpTo (step mail drain).
 void SessionManager::onStep(const step_detection::StepEvent &event) noexcept {
   rtos::ScopedMutexLock lock(_mutex);
-  ++_debug.stepsReceived;
   if (_metrics.state != SessionState::Active) {
-    ++_debug.stepsDropped;
-    return;
-  }
-  if (_haveLastAcceptedStep &&
-      (event.timestampUs - _lastAcceptedStepTimeUs) < MIN_STEP_INTERVAL_US) {
-    ++_debug.stepsDropped;
     return;
   }
 
-  ++_metrics.stepCount;
-  _debug.acceptedStepCount = _metrics.stepCount;
-  _lastAcceptedStepTimeUs = event.timestampUs;
-  _haveLastAcceptedStep = true;
+  const bool accepted = event.confidence >= CONFIDENCE_THRESHOLD;
+
+  if (accepted) {
+    ++_debug.acceptedStepCount;
+    ++_metrics.stepCount;
+  } else {
+    ++_debug.rejectedStepCount;
+  }
 }
 
 void SessionManager::setStepDetectorDebugStats(
@@ -96,10 +112,7 @@ void SessionManager::setStepDetectorDebugStats(
 
 void SessionManager::resetDebugStats() noexcept {
   rtos::ScopedMutexLock lock(_mutex);
-  const uint32_t steps = _metrics.stepCount;
   _debug = SessionDebugStats{};
-  _debug.stepsReceived = steps;
-  _debug.acceptedStepCount = steps;
 }
 
 SessionDebugStats SessionManager::getDebugStats() const noexcept {
@@ -110,11 +123,6 @@ SessionDebugStats SessionManager::getDebugStats() const noexcept {
 uint32_t SessionManager::getStepCount() const noexcept {
   rtos::ScopedMutexLock lock(_mutex);
   return _metrics.stepCount;
-}
-
-uint32_t SessionManager::getStepsReceived() const noexcept {
-  rtos::ScopedMutexLock lock(_mutex);
-  return _debug.stepsReceived;
 }
 
 bool SessionManager::isActive() const noexcept {
@@ -182,18 +190,19 @@ std::size_t SessionManager::formatDebugReport(char *buf,
   const SessionDebugStats d = getDebugStats();
   const step_detection::StepDetectorDebugStats &st = d.detectorStats;
 
-  const int n = std::snprintf(
-      buf, size,
-      "DEBUG acc=%lu sr=%lu sd=%lu srst=%lu "
-      "peaks=%lu em=%lu r_np=%lu ib=%lu",
-      static_cast<unsigned long>(d.acceptedStepCount),
-      static_cast<unsigned long>(d.stepsReceived),
-      static_cast<unsigned long>(d.stepsDropped),
-      static_cast<unsigned long>(d.sessionResets),
-      static_cast<unsigned long>(st.peaks),
-      static_cast<unsigned long>(st.emitted),
-      static_cast<unsigned long>(st.rejectNoPeak),
-      static_cast<unsigned long>(st.intervalBlocked));
+  const int n =
+      std::snprintf(buf, size,
+                    "DEBUG accepted=%lu rejected=%lu peaks=%lu emitted=%lu "
+                    "r_np=%lu r_slope=%lu r_valley=%lu r_base=%lu r_int=%lu",
+                    static_cast<unsigned long>(d.acceptedStepCount),
+                    static_cast<unsigned long>(d.rejectedStepCount),
+                    static_cast<unsigned long>(st.peaks),
+                    static_cast<unsigned long>(st.emitted),
+                    static_cast<unsigned long>(st.rejectNoPeak),
+                    static_cast<unsigned long>(st.rejectSlope),
+                    static_cast<unsigned long>(st.rejectValley),
+                    static_cast<unsigned long>(st.rejectBaseline),
+                    static_cast<unsigned long>(st.rejectInterval));
   if (n <= 0 || static_cast<std::size_t>(n) >= size) {
     return 0u;
   }
