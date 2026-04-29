@@ -58,9 +58,9 @@ Application::Application(imu::Mpu6050Driver &imu,
   signal_processing::FilterConfig config{
       .highPassCutoffHz =
           signal_processing::defaults::DEFAULT_HIGH_PASS_CUTOFF_HZ,
+      .lowPassCutoffHz =
+          signal_processing::defaults::DEFAULT_LOW_PASS_CUTOFF_HZ,
       .sampleRateHz = static_cast<uint16_t>(_imu.getImuConfig().odr),
-      .movingAverageWindow =
-          signal_processing::defaults::DEFAULT_MOVING_AVERAGE_WINDOW,
       .accelScale =
           signal_processing::getAccelScale(_imu.getImuConfig().range)};
 

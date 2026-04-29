@@ -19,7 +19,8 @@ void SignalProcessor::applyConfig() noexcept {
   if (_config.sampleRateHz < 2u) {
     _hpBypass = true;
     _alphaHp = 0.0f;
-    _maWindow = 1u;
+    _lpBypass = true;
+    _alphaLp = 0.0f;
     return;
   }
 
@@ -35,14 +36,14 @@ void SignalProcessor::applyConfig() noexcept {
     _hpBypass = true;
   }
 
-  uint32_t w = _config.movingAverageWindow;
-  if (w < 1u) {
-    w = 1u;
+  if (_config.lowPassCutoffHz > 0.0f) {
+    const float rc = 1.0f / (TWO_PI * _config.lowPassCutoffHz);
+    _alphaLp = dt / (rc + dt);
+    _lpBypass = false;
+  } else {
+    _alphaLp = 0.0f;
+    _lpBypass = true;
   }
-  if (w > MAX_MOVING_AVERAGE_WINDOW) {
-    w = MAX_MOVING_AVERAGE_WINDOW;
-  }
-  _maWindow = w;
 }
 
 void SignalProcessor::resetFilters() noexcept {
@@ -51,11 +52,7 @@ void SignalProcessor::resetFilters() noexcept {
     axis.hpPrevIn = 0.0f;
   }
 
-  std::fill(std::begin(_maBuf), std::end(_maBuf), 0.0f);
-
-  _maSum = 0.0f;
-  _maIndex = 0u;
-  _maCount = 0u;
+  _lpY = 0.0f;
 }
 
 void SignalProcessor::setConfig(const FilterConfig &config) noexcept {
@@ -86,25 +83,20 @@ float SignalProcessor::processAxis(const imu::ImuSample &in,
   return x;
 }
 
-float SignalProcessor::updateMagnitudeMovingAverage(float mag) noexcept {
-  if (_maWindow <= 1u) {
+float SignalProcessor::lowPassFilterAccelMag(float mag) noexcept {
+  if (_lpBypass) {
     return mag;
   }
 
-  _maSum -= _maBuf[_maIndex];
-  _maBuf[_maIndex] = mag;
-  _maSum += mag;
-
-  ++_maIndex;
-  if (_maIndex >= _maWindow) {
-    _maIndex = 0u;
+  // NaN check
+  if (!(mag == mag)) {
+    _lpY = 0.0f;
+    return 0.0f;
   }
 
-  if (_maCount < _maWindow) {
-    ++_maCount;
-  }
-
-  return _maSum / static_cast<float>(_maCount);
+  const float y = _alphaLp * mag + (1.0f - _alphaLp) * _lpY;
+  _lpY = (y == y) ? y : 0.0f;
+  return _lpY;
 }
 
 void SignalProcessor::processOne(const imu::ImuSample &in,
@@ -115,7 +107,8 @@ void SignalProcessor::processOne(const imu::ImuSample &in,
 
   out.timestampUs = in.timestampUs;
   const float mag = accelerationMagnitude(out.accelX, out.accelY, out.accelZ);
-  out.magnitude = updateMagnitudeMovingAverage(mag);
+  const float magLpf = lowPassFilterAccelMag(mag);
+  out.magnitude = magLpf;
 }
 
 void SignalProcessor::processBatch(const imu::ImuSample *in,

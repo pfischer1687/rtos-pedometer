@@ -104,7 +104,7 @@ enum class OutputDataRate : uint16_t {
  */
 struct ImuConfig {
   AccelRange range{AccelRange::PlusMinus2G};
-  DlpfConfig dlpf{DlpfConfig::Hz44};
+  DlpfConfig dlpf{DlpfConfig::Hz21};
   OutputDataRate odr{OutputDataRate::Hz100};
 };
 

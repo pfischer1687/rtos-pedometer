@@ -48,13 +48,16 @@ constexpr uint16_t DEFAULT_SAMPLE_RATE_HZ = 100;
  */
 constexpr uint32_t DEFAULT_MOVING_AVERAGE_WINDOW = 7;
 
+/**
+ * @brief Default low-pass cutoff frequency.
+ */
+constexpr float DEFAULT_LOW_PASS_CUTOFF_HZ = 5.0f;
+
 } // namespace defaults
 
 /**
  * @struct ProcessedSample
  * @brief Filtered acceleration axes and smoothed magnitude.
- * @details
- * - Magnitude is a moving average of the L2 norm of the filtered axes.
  */
 struct ProcessedSample {
   float magnitude{0.0f};
@@ -80,26 +83,32 @@ struct AxisState {
  * @brief Sample rate and cutoff frequencies for high and low pass filters (set
  * in setConfig()).
  * @details
- * - High-pass filter removes slow drift / gravity per axis via the following
- *   first-order infinite impulse response difference equation:
- *   - `y[n] = \alpha * (y[n-1] + x[n] - x[n-1])`
- *   - `\alpha = RC / (RC + dt)`
- *   - `RC = 1 / (2 * \pi * highPassCutoffHz)`
+ * - High-pass filter removes slow drift / gravity per axis via the
+ *   following first-order infinite impulse response (IIR) difference equation:
+ *   - `y_hp[n] = \alpha_hp * (y_hp[n-1] + x[n] - x[n-1])`
+ *   - `\alpha_hp = RC_hp / (RC_hp + dt)`
+ *   - `RC_hp = 1 / (2 * \pi * highPassCutoffHz)`
  *   - `dt = 1 / sampleRateHz`
- * - Low-pass filter is set as DLPF in IMU hardware configuration.
- * - Set a cutoff ≤ 0 to bypass the corresponding filter.
- * - Filters are applied sequentially (high-pass followed by low-pass).
- * - Moving average only applied to the magnitude of the acceleration.
+ * - The IMU has a digital low-pass filter (DLPF) set in its configuration
+ *   (21 Hz cutoff by default). The low-pass filter here is done separately
+ *   at the software layer.
+ * - 1st-order exponential moving average IIR low-pass filter on the
+ *   magnitude of the acceleration:
+ *   - `y_lp[n] = \alpha_lp * x[n] + (1 - \alpha_lp) * y_lp[n-1]`
+ *   - `\alpha_lp = dt / (RC_lp + dt)`
+ *   - `RC_lp = 1 / (2 * \pi * lowPassCutoffHz)`
+ * - Set cutoff ≤ 0 to bypass a filter.
  */
 struct FilterConfig {
   float highPassCutoffHz{defaults::DEFAULT_HIGH_PASS_CUTOFF_HZ};
+  float lowPassCutoffHz{defaults::DEFAULT_LOW_PASS_CUTOFF_HZ};
   uint16_t sampleRateHz{defaults::DEFAULT_SAMPLE_RATE_HZ};
-  uint32_t movingAverageWindow{defaults::DEFAULT_MOVING_AVERAGE_WINDOW};
   float accelScale{defaults::DEFAULT_ACC_SCALE_G_PER_LSB};
 };
 
 /**
- * @brief Get the acceleration scale for a given range.
+ * @brief Get the acceleration scale for a given range (values come from
+ * datasheet).
  * @param range The range to get the acceleration scale for.
  * @return The acceleration scale.
  */
@@ -157,11 +166,12 @@ public:
    * @param in The IMU sample to process.
    * @param out The processed sample.
    * @details
-   * - First-order infinite impulse response difference equation for high-pass
-   * filter:
-   *   - `y[n] = \alpha * (y[n-1] + x[n] - x[n-1])`
-   *   - `\alpha = RC / (RC + dt)`
-   *   - `RC = 1 / (2 * \pi * highPassCutoffHz)`
+   * - High-pass filter removes slow drift / gravity per axis via the
+   *   following first-order infinite impulse response (IIR) difference
+   * equation:
+   *   - `y_hp[n] = \alpha_hp * (y_hp[n-1] + x[n] - x[n-1])`
+   *   - `\alpha_hp = RC_hp / (RC_hp + dt)`
+   *   - `RC_hp = 1 / (2 * \pi * highPassCutoffHz)`
    *   - `dt = 1 / sampleRateHz`
    */
   void processOne(const imu::ImuSample &in, ProcessedSample &out) noexcept;
@@ -205,27 +215,31 @@ private:
   float processAxis(const imu::ImuSample &in, size_t axis) noexcept;
 
   /**
-   * @brief Update the magnitude using a circular buffer-based moving average.
-   * @param mag The magnitude from which to update the moving average.
-   * @return The updated magnitude.
+   * @brief First-order IIR on magnitude (L2 norm), after axis filtering.
+   * @param mag Raw magnitude in g.
+   * @return Low-passed magnitude, or mag when the magnitude LP filter is
+   * bypassed.
+   * @details
+   * - 1st-order exponential moving average IIR low-pass filter on the
+   *   magnitude of the acceleration:
+   *   - `y_lp[n] = \alpha_lp * x[n] + (1 - \alpha_lp) * y_lp[n-1]`
+   *   - `\alpha_lp = dt / (RC_lp + dt)`
+   *   - `RC_lp = 1 / (2 * \pi * lowPassCutoffHz)`
    */
-  float updateMagnitudeMovingAverage(float mag) noexcept;
+  float lowPassFilterAccelMag(float mag) noexcept;
 
   FilterConfig _config{};
 
   // Derived parameters computed from _config in applyConfig().
   // Must call applyConfig() after any change to _config.
   float _accelScale{0.0f};
-  // Circular buffer. Only first _maWindow entries are used.
-  uint32_t _maWindow{defaults::DEFAULT_MOVING_AVERAGE_WINDOW};
 
   float _alphaHp{0.0f};
   bool _hpBypass{true};
+  float _alphaLp{0.0f};
+  bool _lpBypass{true};
+  float _lpY{0.0f};
   AxisState _axis[imu::NUM_ACC_AXES]{};
-  float _maBuf[MAX_MOVING_AVERAGE_WINDOW]{};
-  float _maSum{0.0f};
-  uint32_t _maIndex{0u};
-  uint32_t _maCount{0u};
 };
 
 } // namespace signal_processing
