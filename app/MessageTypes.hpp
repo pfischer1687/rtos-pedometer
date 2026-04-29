@@ -28,7 +28,7 @@ struct RawImuDataFrame {
 struct ProcessedImuDataFrame {
   uint32_t sequence{0};
   uint32_t sourceTimestampUs{0};
-  int32_t accelMagnitudeMilliG{0};
+  float accelMagnitudeG{0.0f};
 };
 
 /**

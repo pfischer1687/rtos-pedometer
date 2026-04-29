@@ -34,7 +34,6 @@ constexpr rtos::Kernel::Clock::duration_u32 USB_IDLE_POLL_MS{1u};
 constexpr rtos::Kernel::Clock::duration_u32 WATCHDOG_KICK_INTERVAL_MS{500u};
 constexpr rtos::Kernel::Clock::duration_u32 LED_BACKOFF_MAX_MS{32u};
 
-constexpr float MILLI_G_PER_G = 1000.0f;
 constexpr uint32_t WATCHDOG_TIMEOUT_MS = 2000;                   // 2s
 constexpr uint32_t WATCHDOG_MAX_IMU_SILENCE_US = 20'000'000u;    // 20s
 constexpr uint32_t WATCHDOG_MAX_SESSION_SILENCE_US = 5'000'000u; // 5s
@@ -159,8 +158,7 @@ void Application::imuDataProcessingThread() {
 
     outMsg->sequence = inMsg->sequence;
     outMsg->sourceTimestampUs = inMsg->sample.timestampUs;
-    outMsg->accelMagnitudeMilliG =
-        static_cast<int32_t>(processed.magnitude * MILLI_G_PER_G);
+    outMsg->accelMagnitudeG = processed.magnitude;
 
     _signalToStepMail.put(out.releaseMsg());
   }
@@ -178,10 +176,8 @@ void Application::stepDetectionThread() {
         _signalToStepMail, rawIn};
     message_types::ProcessedImuDataFrame *inMsg = in.getMsg();
 
-    const float magG =
-        static_cast<float>(inMsg->accelMagnitudeMilliG) / MILLI_G_PER_G;
-    const step_detection::StepDecision decision =
-        _stepDetector.processSample(magG, inMsg->sourceTimestampUs);
+    const step_detection::StepDecision decision = _stepDetector.processSample(
+        inMsg->accelMagnitudeG, inMsg->sourceTimestampUs);
     if (!decision.event) {
       continue;
     }
