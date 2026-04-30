@@ -14,6 +14,7 @@ from pathlib import Path
 
 from tools.common.logging import setup_logging, DSP_DEBUG_STREAM_LOGGER_NAME
 from tools.hitl.transport import SerialTransport
+import time
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 CSV_HEADER = "timestampUs,ax,ay,az,mag,slope\n"
@@ -104,6 +105,7 @@ def main() -> int:
     lines_since_flush = 0
     received_any = False
     total_lines = 0
+    last_valid_time = time.time()
 
     try:
         log.debug("Opening serial transport")
@@ -123,10 +125,12 @@ def main() -> int:
             except TimeoutError:
                 continue
             if not _is_valid_dsp_csv(line):
+                log.debug("Dropped line: %r", line.strip())
                 continue
             if not received_any:
                 log.info("Receiving valid DSP data...")
                 received_any = True
+                last_valid_time = time.time()
             outfile.write(line.strip() + "\n")
             total_lines += 1
             if total_lines % 500 == 0:
@@ -136,6 +140,11 @@ def main() -> int:
                 outfile.flush()
                 log.debug("Flushed %d lines (total=%d)", FLUSH_EVERY_N, total_lines)
                 lines_since_flush = 0
+            if time.time() - last_valid_time > 2.0:
+                log.warning(
+                    "No valid DSP data for %.1f seconds", time.time() - last_valid_time
+                )
+            last_valid_time = time.time()
     except KeyboardInterrupt:
         log.info("Interrupted by user (Ctrl+C)")
     finally:
