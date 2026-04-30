@@ -34,7 +34,7 @@ set(APP_SOURCES
     platform/I2CProvider.cpp
     imu/Mpu6050Driver.cpp
     signal_processing/SignalProcessing.cpp
-    step_detection/StepDetector.cpp
+    step_detection/OscillationTracker.cpp
     session/SessionManager.cpp
     usb/UsbInterface.cpp
     usb/UsbTransport.cpp

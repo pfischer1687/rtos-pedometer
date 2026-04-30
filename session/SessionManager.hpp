@@ -12,7 +12,7 @@
 
 #include "platform/Platform.hpp"
 #include "rtos/Mutex.h"
-#include "step_detection/StepDetector.hpp"
+#include "step_detection/OscillationTracker.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -36,17 +36,6 @@ struct SessionMetrics {
   uint32_t stepCount{0};
   platform::TickUs startTimestampUs{0};
   platform::TickUs endTimestampUs{0};
-};
-
-/**
- * @struct SessionDebugStats
- * @brief Metrics collected for debugging step detection configuration during
- * tuning sessions.
- */
-struct SessionDebugStats {
-  uint32_t acceptedStepCount{0};
-  uint32_t rejectedStepCount{0};
-  step_detection::StepDetectorDebugStats detectorStats{};
 };
 
 /**
@@ -86,27 +75,8 @@ public:
 
   /**
    * @brief Handler for step detection events.
-   * @param event Step detection event.
    */
-  void onStep(const step_detection::StepEvent &event) noexcept;
-
-  /**
-   * @brief Set the step detector debug stats.
-   * @param stats Step detector debug stats.
-   */
-  void setStepDetectorDebugStats(
-      const step_detection::StepDetectorDebugStats &stats) noexcept;
-
-  /**
-   * @brief Clear debug counters and stored detector snapshot.
-   */
-  void resetDebugStats() noexcept;
-
-  /**
-   * @brief Get the session debug stats.
-   * @return Session debug stats.
-   */
-  [[nodiscard]] SessionDebugStats getDebugStats() const noexcept;
+  void onStep() noexcept;
 
   /**
    * @brief Get the step count.
@@ -135,19 +105,9 @@ public:
   [[nodiscard]] std::size_t formatReport(char *buf,
                                          std::size_t size) const noexcept;
 
-  /**
-   * @brief Format the session debug report.
-   * @param buf Buffer to format the debug report into.
-   * @param size Size of the buffer.
-   * @return The number of characters written to the buffer.
-   */
-  [[nodiscard]] std::size_t formatDebugReport(char *buf,
-                                              std::size_t size) const noexcept;
-
 private:
   mutable rtos::Mutex _mutex{};
   SessionMetrics _metrics{};
-  SessionDebugStats _debug{};
 };
 
 } // namespace session

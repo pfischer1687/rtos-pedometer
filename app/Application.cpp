@@ -67,10 +67,6 @@ Application::Application(imu::Mpu6050Driver &imu,
           signal_processing::getAccelScale(_imu.getImuConfig().range)};
 
   _signalProcessor.setConfig(config);
-
-  step_detection::StepDetectorConfig stepCfg{};
-  _stepDetector.setConfig(stepCfg);
-
   _recordingLed.apply(led::LedState::Idle);
 }
 
@@ -234,8 +230,11 @@ void Application::stepDetectionThread() {
         _signalToStepMail, rawIn};
     message_types::ProcessedImuDataFrame *inMsg = in.getMsg();
 
-    const step_detection::StepDecision decision = _stepDetector.processSample(
-        inMsg->accelMagnitudeG, inMsg->sourceTimestampUs);
+    signal_processing::ProcessedSample stepSample{};
+    stepSample.magnitude = inMsg->accelMagnitudeG;
+    stepSample.timestampUs = inMsg->sourceTimestampUs;
+    const step_detection::StepDecision decision =
+        _oscillationTracker.processSample(stepSample);
     if (!decision.event) {
       continue;
     }
@@ -254,7 +253,6 @@ void Application::stepDetectionThread() {
     outMsg->sequence = inMsg->sequence;
 
     outMsg->peakTimeUs = decision.event->timestampUs;
-    outMsg->confidence = decision.event->confidence;
 
     _stepToSessionMail.put(out.releaseMsg());
     _sessionSignal.set(Config::EVENT_STEP_WAKE_SESSION);
@@ -327,9 +325,8 @@ Application::handleUsbCommandsUpTo(const std::uint32_t max) noexcept {
     }
     case CommandId::DebugStatus: {
       char buf[sizeof(message_types::UsbResponse::msg)]{};
-      _sessionManager.setStepDetectorDebugStats(_stepDetector.getDebugStats());
       const std::size_t reportN =
-          _sessionManager.formatDebugReport(buf, sizeof(buf));
+          _oscillationTracker.formatOscillationDebugReport(buf, sizeof(buf));
       const std::string_view text = reportN > 0u
                                         ? std::string_view(buf, reportN)
                                         : std::string_view("FAIL");
@@ -349,8 +346,7 @@ Application::handleUsbCommandsUpTo(const std::uint32_t max) noexcept {
       _imuDropCount.store(0, std::memory_order_release);
       _imuSeq.store(0, std::memory_order_release);
       _imuEventCount.store(0, std::memory_order_release);
-      _sessionManager.resetDebugStats();
-      _stepDetector.resetDebugStats();
+      _oscillationTracker.resetDebugStats();
       (void)_sessionManager.stopSession(platform::getTimeUs());
       writeUsbResponse("OK", out.getMsg());
       break;
@@ -382,14 +378,8 @@ Application::handleStepEventsUpTo(const std::uint32_t max) noexcept {
     if (rawInStep == nullptr) {
       break;
     }
-    MailHandle<message_types::StepDetectionEvent, Config::MAIL_DEPTH> inStep{
-        _stepToSessionMail, rawInStep};
-    message_types::StepDetectionEvent *inMsgStep = inStep.getMsg();
 
-    step_detection::StepEvent evt{};
-    evt.timestampUs = inMsgStep->peakTimeUs;
-    evt.confidence = inMsgStep->confidence;
-    _sessionManager.onStep(evt);
+    _sessionManager.onStep();
   }
   return n;
 }

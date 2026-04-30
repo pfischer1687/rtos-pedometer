@@ -56,7 +56,7 @@ file(GLOB_RECURSE TEST_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test
 set(HOST_SOURCES
   ${FIRMWARE_ROOT}/imu/Mpu6050Driver.cpp
   ${FIRMWARE_ROOT}/signal_processing/SignalProcessing.cpp
-  ${FIRMWARE_ROOT}/step_detection/StepDetector.cpp
+  ${FIRMWARE_ROOT}/step_detection/OscillationTracker.cpp
 )
 
 include(FetchContent)

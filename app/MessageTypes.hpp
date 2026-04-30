@@ -27,7 +27,7 @@ struct RawImuDataFrame {
  */
 struct ProcessedImuDataFrame {
   uint32_t sequence{0};
-  uint32_t sourceTimestampUs{0};
+  platform::TickUs sourceTimestampUs{0};
   float accelMagnitudeG{0.0f};
 };
 
@@ -37,7 +37,6 @@ struct ProcessedImuDataFrame {
 struct StepDetectionEvent {
   uint32_t sequence{0};
   uint32_t peakTimeUs{0};
-  float confidence{0.0f};
 };
 
 /**
@@ -47,7 +46,6 @@ struct SessionNotification {
   uint32_t sequence{0};
   uint8_t state{0};
   uint32_t stepCount{0};
-  float confidence{0.0f};
 };
 
 /**

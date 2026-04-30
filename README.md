@@ -10,14 +10,14 @@ detection on an STM32 Nucleo-F767ZI board with an MPU-6050 IMU.
   - High-pass IIR filter to remove DC drift due to gravity
   - Magnitude computation and smoothing
   - Step feature extraction for downstream detection
-- Step detection via a peak detection algorithm and confidence scoring
+- Step detection via slope-based zero-crossing peak detection with hysteresis and interval gating
 - Watchdog-supervised system health management
   - Monitors IMU liveness and session responsiveness
   - Drives IMU recovery state transitions
 - Session management via USB interface
 - Dedicated RTOS threads with IPC via lock-free mail queues and event signals
 - LED state indication
-- Testing
+- Testing:
   - Unit testing for the IMU driver, DSP pipeline and step detection algorithm
   - HITL testing for the IMU driver
   - Real-time DSP streaming over USB and plotting for DSP and step detection debugging

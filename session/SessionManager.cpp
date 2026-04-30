@@ -11,7 +11,6 @@ namespace session {
 namespace {
 
 static constexpr platform::TickUs US_PER_MS = 1000u;
-static constexpr float CONFIDENCE_THRESHOLD = 0.5f;
 static constexpr float CALORIES_PER_STEP = 0.04f;
 static constexpr float METERS_PER_STEP = 0.762f;
 
@@ -88,36 +87,13 @@ bool SessionManager::stopSession(platform::TickUs stopTimestampUs) noexcept {
   return true;
 }
 
-void SessionManager::onStep(const step_detection::StepEvent &event) noexcept {
+void SessionManager::onStep() noexcept {
   rtos::ScopedMutexLock lock(_mutex);
   if (_metrics.state != SessionState::Active) {
     return;
   }
 
-  const bool accepted = event.confidence >= CONFIDENCE_THRESHOLD;
-
-  if (accepted) {
-    ++_debug.acceptedStepCount;
-    ++_metrics.stepCount;
-  } else {
-    ++_debug.rejectedStepCount;
-  }
-}
-
-void SessionManager::setStepDetectorDebugStats(
-    const step_detection::StepDetectorDebugStats &stats) noexcept {
-  rtos::ScopedMutexLock lock(_mutex);
-  _debug.detectorStats = stats;
-}
-
-void SessionManager::resetDebugStats() noexcept {
-  rtos::ScopedMutexLock lock(_mutex);
-  _debug = SessionDebugStats{};
-}
-
-SessionDebugStats SessionManager::getDebugStats() const noexcept {
-  rtos::ScopedMutexLock lock(_mutex);
-  return _debug;
+  ++_metrics.stepCount;
 }
 
 uint32_t SessionManager::getStepCount() const noexcept {
@@ -174,35 +150,6 @@ std::size_t SessionManager::formatReport(char *buf,
       static_cast<unsigned long>(report.steps),
       static_cast<unsigned long>(report.durationMs),
       static_cast<unsigned long>(report.calories), report.distanceMeters);
-  if (n <= 0 || static_cast<std::size_t>(n) >= size) {
-    return 0u;
-  }
-
-  return static_cast<std::size_t>(n);
-}
-
-std::size_t SessionManager::formatDebugReport(char *buf,
-                                              std::size_t size) const noexcept {
-  if (buf == nullptr || size == 0u) {
-    return 0u;
-  }
-
-  const SessionDebugStats d = getDebugStats();
-  const step_detection::StepDetectorDebugStats &st = d.detectorStats;
-
-  const int n =
-      std::snprintf(buf, size,
-                    "DEBUG accepted=%lu rejected=%lu peaks=%lu emitted=%lu "
-                    "r_np=%lu r_slope=%lu r_valley=%lu r_base=%lu r_int=%lu",
-                    static_cast<unsigned long>(d.acceptedStepCount),
-                    static_cast<unsigned long>(d.rejectedStepCount),
-                    static_cast<unsigned long>(st.peaks),
-                    static_cast<unsigned long>(st.emitted),
-                    static_cast<unsigned long>(st.rejectNoPeak),
-                    static_cast<unsigned long>(st.rejectSlope),
-                    static_cast<unsigned long>(st.rejectValley),
-                    static_cast<unsigned long>(st.rejectBaseline),
-                    static_cast<unsigned long>(st.rejectInterval));
   if (n <= 0 || static_cast<std::size_t>(n) >= size) {
     return 0u;
   }

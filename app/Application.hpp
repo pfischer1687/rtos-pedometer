@@ -15,7 +15,7 @@
 #include "rtos/Thread.h"
 #include "session/SessionManager.hpp"
 #include "signal_processing/SignalProcessing.hpp"
-#include "step_detection/StepDetector.hpp"
+#include "step_detection/OscillationTracker.hpp"
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -251,7 +251,7 @@ private:
   imu::Mpu6050Driver &_imu;
   platform::IWatchdog &_watchdog;
   signal_processing::SignalProcessor _signalProcessor;
-  step_detection::StepDetector _stepDetector;
+  step_detection::OscillationTracker _oscillationTracker;
   session::SessionManager _sessionManager;
   led::RecordingLed _recordingLed{};
 
