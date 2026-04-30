@@ -16,8 +16,11 @@ struct CommandEntry {
 };
 
 constexpr CommandEntry commandTable[] = {
-    {"START", CommandId::Start},   {"STOP", CommandId::Stop},
-    {"STATUS", CommandId::Status}, {"DEBUG_STATUS", CommandId::DebugStatus},
+    {"START", CommandId::Start},
+    {"STOP", CommandId::Stop},
+    {"STATUS", CommandId::Status},
+    {"DEBUG_STATUS", CommandId::DebugStatus},
+    {"DEBUG_START", CommandId::DebugStart},
     {"RESET", CommandId::Reset},
 };
 

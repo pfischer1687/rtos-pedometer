@@ -10,7 +10,7 @@ import subprocess
 from pathlib import Path
 from tools.common.logging import HITL_LOGGER_NAME
 
-BUILD_DIR_REL = Path("build") / "NUCLEO_F767ZI-Develop"
+BUILD_DIR_REL = Path("build-hitl") / "NUCLEO_F767ZI-Develop"
 TARGET_NAME = "rtos-pedometer"
 TIMEOUT_S = 300.0
 BUILD_TYPE_DEFAULT = "Develop"

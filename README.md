@@ -17,6 +17,10 @@ detection on an STM32 Nucleo-F767ZI board with an MPU-6050 IMU.
 - Session management via USB interface
 - Dedicated RTOS threads with IPC via lock-free mail queues and event signals
 - LED state indication
+- Testing
+  - Unit testing for the IMU driver, DSP pipeline and step detection algorithm
+  - HITL testing for the IMU driver
+  - Real-time DSP streaming over USB and plotting for DSP and step detection debugging
 
 ## Hardware
 
@@ -41,6 +45,7 @@ git submodule add --depth 1 https://github.com/mbed-ce/mbed-os.git mbed-os
   - `STATUS`: query current session metrics
   - `RESET`: reset step count and session
   - `DEBUG_STATUS`: collect debug info for tuning step detection thresholds
+  - `DEBUG_START`: start a session and enable DSP streaming over USB
 
 ## Debugging Unit Tests on Host Device
 
@@ -131,6 +136,16 @@ uv run -m tools.hitl_runner --port COM5 --baud 115200 --samples 100 --timeout 5 
 | `1`  | HITL tests failed (validation/protocol error)          |
 | `2`  | Infrastructure failure (build, flash, or serial error) |
 | `3`  | Invalid command-line arguments                         |
+
+#### DSP Debug Streaming + Plotting
+
+From the repo root, with the board on USB:
+
+```bash
+uv run -m tools.debug_stream.py --port <PORT>
+```
+
+Writes a CSV under `data/debug_<timestamp>.csv` (header: `timestampUs,ax,ay,az,mag,slope`). The tool sends `DEBUG_START` and ends with `STOP` on exit, so the firmware stream and session are stopped when the process finishes. You can explore the data in the Jupyter notebook.
 
 ### Log Output
 

@@ -282,3 +282,5 @@ host_build/
 .logs/
 .coverage/
 tmp_errors/
+build-hitl/
+data/

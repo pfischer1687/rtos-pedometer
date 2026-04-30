@@ -28,6 +28,8 @@ namespace app {
 
 namespace {
 
+constexpr std::size_t DSP_USB_DRAIN_BURST = 24u;
+
 constexpr rtos::Kernel::Clock::duration_u32 IMU_DATA_NOT_READY_BACKOFF_MS{1u};
 constexpr rtos::Kernel::Clock::duration_u32 SESSION_SIGNAL_WAIT_MS{200u};
 constexpr rtos::Kernel::Clock::duration_u32 USB_IDLE_POLL_MS{1u};
@@ -91,6 +93,44 @@ void Application::logImuEvent(message_types::ImuEventType type,
   _imuEventCount.store(n + 1u, std::memory_order_release);
 }
 
+void Application::pushDspDebugSampleLossy(const DspDebugSample &s) noexcept {
+  const std::uint32_t in = _dspDbgIn.load(std::memory_order_relaxed);
+  const std::uint32_t out = _dspDbgOut.load(std::memory_order_acquire);
+
+  // USB thread is the sole writer of _dspDbgOut. At capacity, drop this sample
+  // immediately.
+  if (in - out >= DSP_DEBUG_RING_CAP - 1u) {
+    return;
+  }
+
+  _dspDbgRing[in & DSP_DEBUG_RING_MASK] = s;
+  _dspDbgIn.store(in + 1u, std::memory_order_release);
+}
+
+void Application::drainDspDebugRingToUsb(usb::UsbInterface &iface) noexcept {
+  char line[sizeof(message_types::UsbResponse::msg)];
+
+  for (std::size_t n = 0u; n < DSP_USB_DRAIN_BURST; ++n) {
+    const std::uint32_t out = _dspDbgOut.load(std::memory_order_relaxed);
+    const std::uint32_t in = _dspDbgIn.load(std::memory_order_acquire);
+    if (out >= in) {
+      return;
+    }
+
+    const DspDebugSample s = _dspDbgRing[out & DSP_DEBUG_RING_MASK];
+    _dspDbgOut.store(out + 1u, std::memory_order_release);
+
+    const int k = std::snprintf(
+        line, sizeof(line), "%lu,%.6f,%.6f,%.6f,%.6f,%.6f",
+        static_cast<unsigned long>(s.timestampUs), static_cast<double>(s.ax),
+        static_cast<double>(s.ay), static_cast<double>(s.az),
+        static_cast<double>(s.mag), static_cast<double>(s.slope));
+    if (k > 0 && static_cast<std::size_t>(k) < sizeof(line)) {
+      iface.sendResponse(line);
+    }
+  }
+}
+
 void Application::tryAcquireAndSendImuSample() noexcept {
   MailHandle<message_types::RawImuDataFrame, Config::MAIL_DEPTH> mailHandle{
       _sensorToSignalMail};
@@ -134,6 +174,8 @@ void Application::imuDataAcquisitionThread() {
 
 void Application::imuDataProcessingThread() {
   signal_processing::ProcessedSample processed{};
+  static float prevMagDbg = 0.0f;
+  static bool havePrevMagDbg = false;
 
   while (true) {
     message_types::RawImuDataFrame *rawIn =
@@ -159,6 +201,22 @@ void Application::imuDataProcessingThread() {
     outMsg->sequence = inMsg->sequence;
     outMsg->sourceTimestampUs = inMsg->sample.timestampUs;
     outMsg->accelMagnitudeG = processed.magnitude;
+
+    if (_dspDebugStreamEnabled.load(std::memory_order_relaxed)) {
+      const float magDbg = processed.magnitude;
+      const float slopeDbg = havePrevMagDbg ? (magDbg - prevMagDbg) : 0.0f;
+      havePrevMagDbg = true;
+      prevMagDbg = magDbg;
+
+      DspDebugSample row{};
+      row.timestampUs = inMsg->sample.timestampUs;
+      row.ax = processed.accelX;
+      row.ay = processed.accelY;
+      row.az = processed.accelZ;
+      row.mag = magDbg;
+      row.slope = slopeDbg;
+      pushDspDebugSampleLossy(row);
+    }
 
     _signalToStepMail.put(out.releaseMsg());
   }
@@ -253,6 +311,7 @@ Application::handleUsbCommandsUpTo(const std::uint32_t max) noexcept {
     }
     case CommandId::Stop: {
       const bool ok = _sessionManager.stopSession(platform::getTimeUs());
+      _dspDebugStreamEnabled.store(false, std::memory_order_relaxed);
       writeUsbResponse(ok ? "OK" : "FAIL", out.getMsg());
       break;
     }
@@ -277,7 +336,16 @@ Application::handleUsbCommandsUpTo(const std::uint32_t max) noexcept {
       writeUsbResponse(text, out.getMsg());
       break;
     }
+    case CommandId::DebugStart: {
+      const bool ok = _sessionManager.startSession(platform::getTimeUs());
+      if (ok) {
+        _dspDebugStreamEnabled.store(true, std::memory_order_relaxed);
+      }
+      writeUsbResponse(ok ? "OK" : "FAIL", out.getMsg());
+      break;
+    }
     case CommandId::Reset:
+      _dspDebugStreamEnabled.store(false, std::memory_order_relaxed);
       _imuDropCount.store(0, std::memory_order_release);
       _imuSeq.store(0, std::memory_order_release);
       _imuEventCount.store(0, std::memory_order_release);
@@ -362,6 +430,8 @@ void Application::usbCommandThread() {
   char lineBuf[usb::USB_CMD_MAX_LEN];
 
   while (true) {
+    drainDspDebugRingToUsb(iface);
+
     message_types::UsbResponse *resp;
     while ((resp = _sessionToUsbMail.try_get()) != nullptr) {
       MailHandle<message_types::UsbResponse, Config::MAIL_DEPTH> inSess{
@@ -370,6 +440,8 @@ void Application::usbCommandThread() {
       iface.sendResponse(inMsg->msg);
       iface.printPrompt();
     }
+
+    drainDspDebugRingToUsb(iface);
 
     if (!iface.poll(lineBuf, sizeof(lineBuf))) {
       rtos::ThisThread::sleep_for(USB_IDLE_POLL_MS);

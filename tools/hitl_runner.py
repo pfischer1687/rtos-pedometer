@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Top-level entry point for running HITL tests.
 
 Usage example:

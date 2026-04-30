@@ -209,6 +209,45 @@ private:
    */
   void handleImuState(std::uint32_t now, ImuState s) noexcept;
 
+  /**
+   * @brief Lossy SPSC ring
+   * @details
+   * - Signal thread pushes numeric samples only.
+   * - USB thread formats and sends.
+   * - If USB falls behind, newest samples are dropped at the producer
+   *   (real-time path stays bounded).
+   */
+  struct DspDebugSample {
+    std::uint32_t timestampUs{};
+    float ax{};
+    float ay{};
+    float az{};
+    float mag{};
+    float slope{};
+  };
+
+  static constexpr std::uint32_t DSP_DEBUG_RING_CAP = 32u;
+  static constexpr std::uint32_t DSP_DEBUG_RING_MASK = DSP_DEBUG_RING_CAP - 1u;
+  static_assert((DSP_DEBUG_RING_CAP & (DSP_DEBUG_RING_CAP - 1u)) == 0u &&
+                    DSP_DEBUG_RING_CAP >= 8u,
+                "DSP debug ring capacity must be a power of two and >= 8");
+
+  /**
+   * @brief Push a DSP debug sample to the ring.
+   * @param s DSP debug sample.
+   */
+  void pushDspDebugSampleLossy(const DspDebugSample &s) noexcept;
+
+  /**
+   * @brief Drain the DSP debug ring to the USB interface.
+   * @param iface USB interface.
+   */
+  void drainDspDebugRingToUsb(usb::UsbInterface &iface) noexcept;
+
+  DspDebugSample _dspDbgRing[DSP_DEBUG_RING_CAP]{};
+  std::atomic<std::uint32_t> _dspDbgIn{0u};
+  std::atomic<std::uint32_t> _dspDbgOut{0u};
+
   imu::Mpu6050Driver &_imu;
   platform::IWatchdog &_watchdog;
   signal_processing::SignalProcessor _signalProcessor;
@@ -247,9 +286,9 @@ private:
   std::atomic<led::LedState> _ledState{led::LedState::Idle};
   std::atomic<uint32_t> _sessionHeartbeatUs{0u};
   std::atomic<uint32_t> _ledVersion{0u};
-
   std::atomic<uint32_t> _lastImuTickUs{0u};
   std::atomic<ImuState> _imuState{ImuState::Healthy};
+  std::atomic<bool> _dspDebugStreamEnabled{false};
 
   rtos::Thread _imuThread;
   rtos::Thread _signalThread;

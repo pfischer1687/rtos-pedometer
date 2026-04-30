@@ -16,6 +16,7 @@ enum class CommandId {
   Stop,
   Status,
   DebugStatus,
+  DebugStart,
   Reset,
 };
 
