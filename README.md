@@ -142,7 +142,7 @@ uv run -m tools.hitl_runner --port COM5 --baud 115200 --samples 100 --timeout 5 
 From the repo root, with the board on USB:
 
 ```bash
-uv run -m tools.debug_stream.py --port <PORT>
+uv run -m tools.debug_stream --port <PORT>
 ```
 
 Writes a CSV under `data/debug_<timestamp>.csv` (header: `timestampUs,ax,ay,az,mag,slope`). The tool sends `DEBUG_START` and ends with `STOP` on exit, so the firmware stream and session are stopped when the process finishes. You can explore the data in the Jupyter notebook.

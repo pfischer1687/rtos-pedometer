@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime
 
 HITL_LOGGER_NAME = "hitl_runner"
+DSP_DEBUG_STREAM_LOGGER_NAME = "dsp_debug_stream"
 
 
 def setup_logging(name: str, repo_root: Path, log_subdir: str = ".logs") -> Path:
