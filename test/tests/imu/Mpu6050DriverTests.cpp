@@ -19,10 +19,8 @@ constexpr uint8_t WHO_AM_I_REG = 0x75u;
 constexpr uint8_t WHO_AM_I_EXPECTED = 0x68u;
 constexpr uint8_t PWR_MGMT_1_REG = 0x6Bu;
 constexpr uint8_t INT_ENABLE_REG = 0x38u;
-constexpr uint8_t INT_STATUS_REG = 0x3Au;
 constexpr uint8_t ACCEL_XOUT_H_REG = 0x3Bu;
 constexpr uint8_t DATA_RDY_EN_BIT = 0x01u;
-constexpr uint8_t DATA_RDY_INT_BIT = 0x01u;
 constexpr uint8_t CONFIG_REG = 0x1Au;
 constexpr uint8_t ACCEL_CONFIG_REG = 0x1Cu;
 constexpr uint8_t SMPLRT_DIV_REG = 0x19u;
@@ -368,7 +366,6 @@ TEST_F(Mpu6050DriverTest, ConsumeDataReadyReturnsTruePerNotify) {
 TEST_F(Mpu6050DriverTest, ReadSampleReadsFromAccelXoutHRegister) {
   setupSampling();
   mockDataReadyInput_.triggerCallback();
-  mockI2c_.setRegisterResponseByte(INT_STATUS_REG, DATA_RDY_INT_BIT);
   uint8_t accelData[SAMPLE_BUF_LEN] = {0x00u, 0x01u, 0x00u,
                                        0x02u, 0xFFu, 0xFFu};
   mockI2c_.setRegisterResponseBytes(ACCEL_XOUT_H_REG, accelData,
@@ -386,7 +383,6 @@ TEST_F(Mpu6050DriverTest, ReadSampleReadsFromAccelXoutHRegister) {
 TEST_F(Mpu6050DriverTest, ReadSampleDecodesBigEndianAccelCorrectly) {
   setupSampling();
   mockDataReadyInput_.triggerCallback();
-  mockI2c_.setRegisterResponseByte(INT_STATUS_REG, DATA_RDY_INT_BIT);
   uint8_t buf[6] = {0x12u, 0x34u, 0xABu, 0xCDu, 0x00u, 0x01u};
   mockI2c_.setRegisterResponseBytes(ACCEL_XOUT_H_REG, buf, SAMPLE_BUF_LEN);
 
@@ -401,7 +397,6 @@ TEST_F(Mpu6050DriverTest, ReadSampleUsesTimestampFromNotifyDataReady) {
   setupSampling();
   mockTimer_.setNowUs(12345u);
   mockDataReadyInput_.triggerCallback();
-  mockI2c_.setRegisterResponseByte(INT_STATUS_REG, DATA_RDY_INT_BIT);
   uint8_t buf[SAMPLE_BUF_LEN] = {0};
   mockI2c_.setRegisterResponseBytes(ACCEL_XOUT_H_REG, buf, SAMPLE_BUF_LEN);
 
@@ -410,11 +405,15 @@ TEST_F(Mpu6050DriverTest, ReadSampleUsesTimestampFromNotifyDataReady) {
   EXPECT_EQ(sample.timestampUs, 12345u);
 }
 
-TEST_F(Mpu6050DriverTest, ReadSampleFaultsOnIntStatusTransferFailure) {
+TEST_F(Mpu6050DriverTest, ReadSampleFaultsOnAccelBurstTransferFailure) {
   setupSampling();
   mockDataReadyInput_.triggerCallback();
-  mockI2c_.setRegisterResponseByte(INT_STATUS_REG, DATA_RDY_INT_BIT);
-  mockI2c_.setNextTransferResult(platform::Result::Error);
+  uint8_t buf[SAMPLE_BUF_LEN] = {0};
+  mockI2c_.setRegisterResponseBytes(ACCEL_XOUT_H_REG, buf, SAMPLE_BUF_LEN);
+  // readRegsWithRetry attempts MAX_READ_RETRY_ATTEMPTS + 1 transfers.
+  mockI2c_.setNextTransferResults({platform::Result::Error,
+                                   platform::Result::Error,
+                                   platform::Result::Error});
 
   imu::ImuSample sample{};
   platform::Result r = driver_->readSample(sample);
@@ -425,10 +424,11 @@ TEST_F(Mpu6050DriverTest, ReadSampleFaultsOnIntStatusTransferFailure) {
 TEST_F(Mpu6050DriverTest, ReadSampleFaultsOnAccelBurstReadFailure) {
   setupSampling();
   mockDataReadyInput_.triggerCallback();
-  mockI2c_.setRegisterResponseByte(INT_STATUS_REG, DATA_RDY_INT_BIT);
   uint8_t buf[SAMPLE_BUF_LEN] = {0};
   mockI2c_.setRegisterResponseBytes(ACCEL_XOUT_H_REG, buf, SAMPLE_BUF_LEN);
-  mockI2c_.setNextTransferResult(platform::Result::HardwareFault);
+  mockI2c_.setNextTransferResults({platform::Result::HardwareFault,
+                                   platform::Result::HardwareFault,
+                                   platform::Result::HardwareFault});
 
   imu::ImuSample sample{};
   platform::Result r = driver_->readSample(sample);
@@ -436,9 +436,8 @@ TEST_F(Mpu6050DriverTest, ReadSampleFaultsOnAccelBurstReadFailure) {
   EXPECT_EQ(driver_->getState(), imu::DriverState::Fault);
 }
 
-TEST_F(Mpu6050DriverTest, ReadSampleReturnsDataNotReadyWhenIntStatusClear) {
+TEST_F(Mpu6050DriverTest, ReadSampleReturnsDataNotReadyWithoutIsrNotify) {
   setupSampling();
-  mockI2c_.setRegisterResponseByte(INT_STATUS_REG, 0u);
 
   imu::ImuSample sample{};
   platform::Result r = driver_->readSample(sample);
@@ -448,12 +447,10 @@ TEST_F(Mpu6050DriverTest, ReadSampleReturnsDataNotReadyWhenIntStatusClear) {
 TEST_F(Mpu6050DriverTest, ReadRegsWithRetrySucceedsAfterTransientFailure) {
   setupSampling();
   mockDataReadyInput_.triggerCallback();
-  mockI2c_.setRegisterResponseByte(INT_STATUS_REG, DATA_RDY_INT_BIT);
   uint8_t buf[SAMPLE_BUF_LEN] = {0};
   mockI2c_.setRegisterResponseBytes(ACCEL_XOUT_H_REG, buf, SAMPLE_BUF_LEN);
-  mockI2c_.setNextTransferResults({platform::Result::Ok, platform::Result::Busy,
-                                   platform::Result::Busy,
-                                   platform::Result::Ok});
+  mockI2c_.setNextTransferResults(
+      {platform::Result::Busy, platform::Result::Busy, platform::Result::Ok});
 
   imu::ImuSample sample{};
   platform::Result r = driver_->readSample(sample);
@@ -463,13 +460,11 @@ TEST_F(Mpu6050DriverTest, ReadRegsWithRetrySucceedsAfterTransientFailure) {
 TEST_F(Mpu6050DriverTest, ReadRegsWithRetryFailsAfterAllAttemptsFail) {
   setupSampling();
   mockDataReadyInput_.triggerCallback();
-  mockI2c_.setRegisterResponseByte(INT_STATUS_REG, DATA_RDY_INT_BIT);
   uint8_t buf[SAMPLE_BUF_LEN] = {0};
   mockI2c_.setRegisterResponseBytes(ACCEL_XOUT_H_REG, buf, SAMPLE_BUF_LEN);
-  mockI2c_.setNextTransferResult(platform::Result::Error);
-  mockI2c_.setNextTransferResult(platform::Result::Error);
-  mockI2c_.setNextTransferResult(platform::Result::Error);
-  mockI2c_.setNextTransferResult(platform::Result::Error);
+  mockI2c_.setNextTransferResults({platform::Result::Error,
+                                   platform::Result::Error,
+                                   platform::Result::Error});
 
   imu::ImuSample sample{};
   platform::Result r = driver_->readSample(sample);

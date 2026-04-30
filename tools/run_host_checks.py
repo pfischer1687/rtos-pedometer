@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 LOGGER_NAME = "run_host_checks"
 DIR_TEST = "test"
 DIR_BUILD = "build"
+DIR_HITL_BUILD = "build-hitl"
 DIR_LOGS = ".logs"
 DIR_MBED_OS = "mbed-os"
 DIR_COVERAGE = ".coverage"
@@ -58,6 +59,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 EXCLUDE_DIRS = (
     REPO_ROOT / DIR_MBED_OS,
     REPO_ROOT / DIR_BUILD,
+    REPO_ROOT / DIR_HITL_BUILD,
     REPO_ROOT / DIR_TEST / DIR_BUILD,
     REPO_ROOT / VENV_DIR,
 )

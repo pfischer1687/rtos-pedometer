@@ -51,15 +51,6 @@ constexpr uint8_t PWR_MGMT_1_DEFAULT_VALUE = 0x40u;
 constexpr uint8_t DATA_RDY_EN_BIT = 0x01u;
 
 /**
- * @brief Data Ready interrupt bit mask.
- * @details
- * Datasheet:
- * - 0x3A: INT_STATUS
- * - Bit0: DATA_RDY_INT
- */
-constexpr uint8_t DATA_RDY_INT_BIT = 0x01u;
-
-/**
  * @brief Maximum number of attempts to read registers.
  */
 constexpr uint8_t MAX_READ_RETRY_ATTEMPTS = 2u;
@@ -450,12 +441,7 @@ platform::Result Mpu6050Driver::readSample(ImuSample &sample) noexcept {
     return platform::Result::InvalidState;
   }
 
-  uint8_t intStatus = 0u;
-  const platform::Result intStatusResult =
-      readRegs(Register::INT_STATUS, &intStatus, 1);
-  if (!platform::isOk(intStatusResult))
-    return fault(intStatusResult);
-  if ((intStatus & DATA_RDY_INT_BIT) == 0u) {
+  if (!_dataReadyFlag.exchange(false, std::memory_order_acq_rel)) {
     return platform::Result::DataNotReady;
   }
 
