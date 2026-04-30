@@ -5,7 +5,7 @@
 	{
 	    "type": "cortex-debug",
 	    "name": "Debug rtos-pedometer NUCLEO_F767ZI Develop",
-	    "executable": "C:/Users/pfisc/github/rtos-pedometer/build/NUCLEO_F767ZI-Develop/rtos-pedometer.elf",
+	    "executable": "C:/Users/pfisc/github/rtos-pedometer/build-hitl/NUCLEO_F767ZI-Develop/rtos-pedometer.elf",
 	    "cwd": "${workspaceRoot}",
 	    "gdbPath": "C:/arm-gcc/bin/arm-none-eabi-gdb.exe",
 		"objdumpPath": "C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.3 rel1/bin/arm-none-eabi-objdump.exe",
@@ -14,7 +14,7 @@
 		"request": "launch",
 		"preLaunchTask": "Build rtos-pedometer and start GDB server",
 		// Override the command sequences used by VS Code to be correct for this GDB server
-		"overrideLaunchCommands": ["monitor reset", "load \"C:/Users/pfisc/github/rtos-pedometer/build/NUCLEO_F767ZI-Develop/rtos-pedometer.hex\"", "set mem inaccessible-by-default off", "tbreak main", "monitor reset"],
+		"overrideLaunchCommands": ["monitor reset", "load \"C:/Users/pfisc/github/rtos-pedometer/build-hitl/NUCLEO_F767ZI-Develop/rtos-pedometer.hex\"", "set mem inaccessible-by-default off", "tbreak main", "monitor reset"],
 		"overrideRestartCommands": ["monitor reset"],
 	},
     ]

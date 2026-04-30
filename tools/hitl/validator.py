@@ -18,6 +18,9 @@ G_MPS2 = 9.80665
 G_TOL_PCT = 0.1
 G_TOL_MPS2 = G_TOL_PCT * G_MPS2
 
+# Allowing for IMU DLPF attenuation
+WARMUP_SAMPLES = 10
+
 
 class ValidationError(Exception):
     """Raised when IMU sample validation fails."""
@@ -60,6 +63,9 @@ class ImuValidator:
                 )
 
         for i, s in enumerate(samples):
+            if i < WARMUP_SAMPLES:
+                continue
+
             ax_mps2 = (s.ax / LSB_PER_G) * G_MPS2
             ay_mps2 = (s.ay / LSB_PER_G) * G_MPS2
             az_mps2 = (s.az / LSB_PER_G) * G_MPS2

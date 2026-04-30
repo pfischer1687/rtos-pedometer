@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--samples",
         type=int,
-        default=10,
+        default=100,
         help="Number of IMU samples to collect.",
     )
     parser.add_argument(

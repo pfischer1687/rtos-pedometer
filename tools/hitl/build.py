@@ -10,7 +10,8 @@ import subprocess
 from pathlib import Path
 from tools.common.logging import HITL_LOGGER_NAME
 
-BUILD_DIR_REL = Path("build-hitl") / "NUCLEO_F767ZI-Develop"
+BUILD_DIR_REL_PARENT = Path("build-hitl")
+BUILD_DIR_REL = BUILD_DIR_REL_PARENT / "NUCLEO_F767ZI-Develop"
 TARGET_NAME = "rtos-pedometer"
 TIMEOUT_S = 300.0
 BUILD_TYPE_DEFAULT = "Develop"
@@ -144,7 +145,7 @@ class BuildManager:
         """Delete the build/ directory safely."""
         logger.info("[clean] Removing build directory: %s", self.build_dir)
 
-        build_root = self.repo_root / "build"
+        build_root = (self.repo_root / BUILD_DIR_REL_PARENT).resolve()
         if not build_root.exists():
             logger.info("[clean] Build root directory does not exist; skipping")
             return

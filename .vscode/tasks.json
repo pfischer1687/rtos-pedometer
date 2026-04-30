@@ -7,7 +7,7 @@
 			"label": "Build rtos-pedometer",
 			"type": "shell",
 			"command": "C:/Program Files/CMake/bin/cmake.exe",
-			"args": ["--build", "C:/Users/pfisc/github/rtos-pedometer/build/NUCLEO_F767ZI-Develop", "--target", "rtos-pedometer"],
+			"args": ["--build", "C:/Users/pfisc/github/rtos-pedometer/build-hitl/NUCLEO_F767ZI-Develop", "--target", "rtos-pedometer"],
 		},
 		// Build rtos-pedometer and run the GDB server
 		{
