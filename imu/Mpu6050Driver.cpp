@@ -208,8 +208,7 @@ Mpu6050Driver::Mpu6050Driver(platform::II2CProvider &i2c,
                              platform::ITimer &timer,
                              uint8_t i2cAddr7Bit) noexcept
     : _state(DriverState::Uninitialized), _i2c(i2c), _timer(timer),
-      _i2cAddr7Bit(i2cAddr7Bit), _dataReadyFlag(false),
-      _lastDataReadyTimestampUs(0u) {}
+      _i2cAddr7Bit(i2cAddr7Bit), _dataReadyFlag(false) {}
 
 platform::Result Mpu6050Driver::writeReg(Register reg, uint8_t value) noexcept {
   const uint8_t tx[2] = {static_cast<uint8_t>(reg), value};
@@ -289,7 +288,6 @@ platform::Result Mpu6050Driver::healthCheck() noexcept {
 
 platform::Result Mpu6050Driver::reset() noexcept {
   _dataReadyFlag.store(false, std::memory_order_release);
-  _lastDataReadyTimestampUs.store(0u, std::memory_order_release);
 
   const platform::Result disableIntResult =
       writeReg(Register::INT_ENABLE, 0x00u);
@@ -417,7 +415,6 @@ void Mpu6050Driver::notifyDataReadyFromIsr() noexcept {
     return;
   }
 
-  _lastDataReadyTimestampUs.store(_timer.nowUs(), std::memory_order_release);
   _dataReadyFlag.store(true, std::memory_order_release);
 }
 
@@ -430,10 +427,6 @@ void Mpu6050Driver::attachDataReadyInput(
   _dataReadyInput = &gpio;
   _dataReadyInput->setCallback(&Mpu6050Driver::notifyDataReadyFromIsrStatic,
                                this);
-}
-
-bool Mpu6050Driver::consumeDataReady() noexcept {
-  return _dataReadyFlag.exchange(false, std::memory_order_acq_rel);
 }
 
 platform::Result Mpu6050Driver::readSample(ImuSample &sample) noexcept {
@@ -452,8 +445,7 @@ platform::Result Mpu6050Driver::readSample(ImuSample &sample) noexcept {
     return fault(readResult);
 
   decodeSampleFromBuffer(buf, sample);
-  sample.timestampUs =
-      _lastDataReadyTimestampUs.load(std::memory_order_acquire);
+  sample.timestampUs = _timer.nowUs();
   return platform::Result::Ok;
 }
 

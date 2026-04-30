@@ -200,7 +200,7 @@ public:
    * @details
    * - ISR-safe: no blocking or allocation.
    * - Only valid when state is Sampling.
-   * - Sets data-ready flag and captures ISR timestamp for sample timestamp.
+   * - Sets data-ready flag only (signal-only; no other state).
    */
   void notifyDataReadyFromIsr() noexcept;
 
@@ -217,11 +217,14 @@ public:
   void attachDataReadyInput(platform::IDataReadyInput &gpio) noexcept;
 
   /**
-   * @brief Consume the data-ready signal.
-   * @return True if data-ready had been set since last consume; false
-   * otherwise.
+   * @brief Non-consuming peek: true if a data-ready edge is pending read.
+   * @details
+   * - Does not clear the flag; use for wait loops. Only readSample() consumes
+   * the edge via exchange(false).
    */
-  bool consumeDataReady() noexcept;
+  [[nodiscard]] bool isDataReadyPending() const noexcept {
+    return _dataReadyFlag.load(std::memory_order_acquire);
+  }
 
   /**
    * @brief Read one accelerometer sample.
@@ -229,8 +232,9 @@ public:
    * @return Result.
    * @details
    * - Only valid when state is Sampling.
-   * - Returns DataNotReady if data is not ready.
-   * - Captures ISR timestamp for sample timestamp.
+   * - Sole consumer of the ISR data-ready edge (atomic exchange on flag).
+   * - Returns DataNotReady if no pending edge.
+   * - Timestamp is taken from the timer after a successful register read.
    */
   platform::Result readSample(ImuSample &sample) noexcept;
 
@@ -295,7 +299,6 @@ private:
    */
   enum class Register : uint8_t {
     INT_ENABLE = 0x38,
-    INT_STATUS = 0x3A,
     SMPLRT_DIV = 0x19,
     CONFIG = 0x1A,
     ACCEL_CONFIG = 0x1C,
@@ -362,7 +365,6 @@ private:
   uint8_t _i2cAddr7Bit{0};
   platform::IDataReadyInput *_dataReadyInput{nullptr};
   std::atomic<bool> _dataReadyFlag{false};
-  std::atomic<platform::TickUs> _lastDataReadyTimestampUs{0};
   ImuConfig _imuConfig;
 };
 

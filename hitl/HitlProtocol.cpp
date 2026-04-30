@@ -139,7 +139,9 @@ void dispatchCommand(usb::UsbInterface &usbInterface, imu::Mpu6050Driver &imu,
     for (std::uint16_t i = 0u; i < nBytes.value(); ++i) {
       const platform::TickUs startUs = timer.nowUs();
 
-      while (!imu.consumeDataReady()) {
+      // DataReady is edge-triggered; readSample() consumes the pending edge
+      // atomically. Poll without consuming so readSample is the sole consumer.
+      while (!imu.isDataReadyPending()) {
         timer.delayMs(READ_POLL_DELAY_MS);
         const platform::TickUs elapsedUs =
             platform::elapsed(startUs, timer.nowUs());

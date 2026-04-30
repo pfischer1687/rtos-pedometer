@@ -332,30 +332,41 @@ TEST_F(Mpu6050DriverTest, NotifyDataReadyFromIsrDoesNotCallI2C) {
 TEST_F(Mpu6050DriverTest, NotifyDataReadyWhenNotSamplingDoesNothing) {
   setupSuccessfulConfigure();
   mockDataReadyInput_.triggerCallback();
-  EXPECT_FALSE(driver_->consumeDataReady());
+  EXPECT_FALSE(driver_->isDataReadyPending());
 }
 
 TEST_F(Mpu6050DriverTest, ConsumeDataReadyReturnsTrueOnceAfterSingleNotify) {
   setupSampling();
   mockDataReadyInput_.triggerCallback();
-  EXPECT_TRUE(driver_->consumeDataReady());
-  EXPECT_FALSE(driver_->consumeDataReady());
+  EXPECT_TRUE(driver_->isDataReadyPending());
+  uint8_t buf[SAMPLE_BUF_LEN] = {0};
+  mockI2c_.setRegisterResponseBytes(ACCEL_XOUT_H_REG, buf, SAMPLE_BUF_LEN);
+  imu::ImuSample sample{};
+  ASSERT_TRUE(platform::isOk(driver_->readSample(sample)));
+  EXPECT_FALSE(driver_->isDataReadyPending());
 }
 
 TEST_F(Mpu6050DriverTest, ConsumeDataReadyReturnsFalseWhenNotNotified) {
   setupSampling();
-  EXPECT_FALSE(driver_->consumeDataReady());
+  EXPECT_FALSE(driver_->isDataReadyPending());
 }
 
 TEST_F(Mpu6050DriverTest, ConsumeDataReadyReturnsTruePerNotify) {
   setupSampling();
-  mockDataReadyInput_.triggerCallback();
-  EXPECT_TRUE(driver_->consumeDataReady());
-  EXPECT_FALSE(driver_->consumeDataReady());
+  uint8_t buf[SAMPLE_BUF_LEN] = {0};
+  mockI2c_.setRegisterResponseBytes(ACCEL_XOUT_H_REG, buf, SAMPLE_BUF_LEN);
 
   mockDataReadyInput_.triggerCallback();
-  EXPECT_TRUE(driver_->consumeDataReady());
-  EXPECT_FALSE(driver_->consumeDataReady());
+  EXPECT_TRUE(driver_->isDataReadyPending());
+  imu::ImuSample s0{};
+  ASSERT_TRUE(platform::isOk(driver_->readSample(s0)));
+  EXPECT_FALSE(driver_->isDataReadyPending());
+
+  mockDataReadyInput_.triggerCallback();
+  EXPECT_TRUE(driver_->isDataReadyPending());
+  imu::ImuSample s1{};
+  ASSERT_TRUE(platform::isOk(driver_->readSample(s1)));
+  EXPECT_FALSE(driver_->isDataReadyPending());
 }
 
 /**
