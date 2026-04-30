@@ -10,6 +10,7 @@ dependencies = [
     "notebook>=7.5.5",
     "matplotlib>=3.10.9",
     "pandas>=3.0.1",
+    "numpy>=2.4.0",
 ]
 description = "Tools for unit and HITL testing of rtos-pedometer firmware"
 readme = "README.md"

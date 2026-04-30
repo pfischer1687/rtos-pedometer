@@ -2130,6 +2130,7 @@ source = { editable = "." }
 dependencies = [
     { name = "matplotlib" },
     { name = "notebook" },
+    { name = "numpy" },
     { name = "pandas" },
     { name = "pyserial" },
 ]
@@ -2144,6 +2145,7 @@ dev = [
 requires-dist = [
     { name = "matplotlib", specifier = ">=3.10.9" },
     { name = "notebook", specifier = ">=7.5.5" },
+    { name = "numpy", specifier = ">=2.4.0" },
     { name = "pandas", specifier = ">=3.0.1" },
     { name = "pyright", extras = ["nodejs"], marker = "extra == 'dev'", specifier = ">=1.1.408" },
     { name = "pyserial", specifier = ">=3.5" },
