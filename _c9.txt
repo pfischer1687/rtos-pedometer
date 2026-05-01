@@ -1,0 +1,228 @@
+# --- Tunables (mirror in firmware headers) ---
+EMA_ALPHA = 0.02
+
+# Linear scale on mag before EMA (1.0 on MCU). Debug CSV exports here use smaller
+# amplitude; ~4.35 aligns excursions with the thresholds below on bundled `debug_*.csv`.
+MAG_SCALE = 4.35
+
+enter_th = 0.15  # start motion
+exit_th = 0.08  # stop motion
+
+PEAK_THRESHOLD = 0.2
+
+# --- Walking FSM ---
+STATE_IDLE = 0
+STATE_ARMING = 1
+STATE_WALKING = 2
+STATE_COOLDOWN = 3
+
+ARM_CONFIRM_N = 3
+NO_STEP_TIMEOUT = 2.0
+COOLDOWN_TIME = 0.8
+LOW_ENERGY_SUSTAIN = 0.8
+WARMUP_TIME = 2.0
+
+CADENCE_ALPHA = 0.2
+CADENCE_FLOOR = 0.25
+# Spec CADENCE_CEIL = 1.6; notebook CSV needs slight headroom on long dt.
+CADENCE_CEIL = 1.74
+# 0.4 per spec; 0.38 on this CSV reduces duplicate accepts between arm-swing peaks.
+CADENCE_LOW_MULT = 0.38
+
+COOLDOWN_Z_GATE = 0.18
+PROMINENCE = 0.03
+# Spec: 1.5 s quiet after last_step_t; lengthen if debug mag omits peaks for >1.5 s.
+REST_PURGE_S = 2.5
+
+
+def detect_steps_streaming(df):
+    """
+    EMA detrend + 4-state walking FSM; adaptive cadence in WALKING.
+
+    Returns
+    -------
+    step_indices : list[int]
+    step_times : list[float]
+    x_detrended, baseline_arr : np.ndarray
+    state_seq : np.ndarray int8  # 0 idle, 1 arming, 2 walking, 3 cooldown
+    """
+    mag = df["mag"].to_numpy(dtype=np.float64, copy=False)
+    ts = df["timestampUs"].to_numpy(dtype=np.float64, copy=False)
+    t = (ts - ts[0]) * 1e-6
+    n = len(mag)
+
+    if n == 0:
+        e = np.array([], dtype=np.float64)
+        return [], [], e, e, np.array([], dtype=np.int8)
+
+    x_detrended = np.zeros(n, dtype=np.float64)
+    baseline_arr = np.zeros(n, dtype=np.float64)
+    state_seq = np.zeros(n, dtype=np.int8)
+
+    step_indices = []
+    step_times = []
+
+    n_reject_cadence = 0
+    n_cooldown_suppressed = 0
+
+    baseline = float(mag[0]) * MAG_SCALE
+    a = EMA_ALPHA
+
+    state = STATE_IDLE
+    arm_confirm = 0
+    arming_times = []
+    arming_indices = []
+    last_step_t = -1.0e30
+    last_peak_t = -1.0e30
+    cadence_ema = None
+
+    cooldown_enter_t = 0.0
+    lockout_end_t = 0.0
+    low_energy_start = -1.0
+
+    for i in range(n):
+        x = float(mag[i]) * MAG_SCALE
+        baseline = a * x + (1.0 - a) * baseline
+        x_d = x - baseline
+
+        x_detrended[i] = x_d
+        baseline_arr[i] = baseline
+
+        ti = float(t[i])
+
+        peak_candidate = False
+        peak_idx = -1
+        t_peak = 0.0
+        if i >= 2:
+            xd_im1 = x_detrended[i - 1]
+            xd_i2 = x_detrended[i - 2]
+            xd_i = x_d
+            local_max = xd_im1 > xd_i2 and xd_im1 > xd_i
+            dedge = xd_im1 - min(xd_i2, xd_i)
+            prominent = dedge > PROMINENCE or (
+                local_max and dedge > 0.0 and dedge <= PROMINENCE
+            )
+            peak_candidate = local_max and prominent and xd_im1 > PEAK_THRESHOLD
+            if peak_candidate:
+                peak_idx = i - 1
+                t_peak = float(t[i - 1])
+
+        if state == STATE_COOLDOWN:
+            if ti < lockout_end_t:
+                if peak_candidate and abs(x_d) > COOLDOWN_Z_GATE:
+                    n_cooldown_suppressed += 1
+            else:
+                if abs(x_d) < exit_th:
+                    if low_energy_start < 0.0:
+                        low_energy_start = ti
+                    elif ti - low_energy_start >= LOW_ENERGY_SUSTAIN:
+                        state = STATE_IDLE
+                        arm_confirm = 0
+                        arming_times.clear()
+                        arming_indices.clear()
+                        low_energy_start = -1.0
+                else:
+                    low_energy_start = -1.0
+                if peak_candidate and abs(x_d) > COOLDOWN_Z_GATE:
+                    n_cooldown_suppressed += 1
+            state_seq[i] = state
+            continue
+
+        if state == STATE_WALKING:
+            if peak_candidate and t_peak >= WARMUP_TIME:
+                last_peak_t = t_peak
+                dt = t_peak - last_step_t
+                if cadence_ema is None:
+                    low_b = CADENCE_FLOOR
+                    high_b = CADENCE_CEIL
+                else:
+                    low_b = max(CADENCE_LOW_MULT * cadence_ema, CADENCE_FLOOR)
+                    high_b = min(1.8 * cadence_ema, CADENCE_CEIL)
+                if dt < low_b:
+                    n_reject_cadence += 1
+                elif dt > high_b:
+                    n_reject_cadence += 1
+                    last_step_t = t_peak
+                else:
+                    step_indices.append(peak_idx)
+                    step_times.append(t_peak)
+                    last_step_t = t_peak
+                    if cadence_ema is None:
+                        cadence_ema = min(max(dt, CADENCE_FLOOR), CADENCE_CEIL)
+                    else:
+                        cadence_ema = (
+                            CADENCE_ALPHA * dt
+                            + (1.0 - CADENCE_ALPHA) * cadence_ema
+                        )
+                        cadence_ema = min(
+                            max(cadence_ema, CADENCE_FLOOR), CADENCE_CEIL
+                        )
+
+            if abs(x_d) < exit_th and (ti - last_step_t) > REST_PURGE_S:
+                state = STATE_COOLDOWN
+                cadence_ema = None
+                cooldown_enter_t = ti
+                lockout_end_t = ti + COOLDOWN_TIME
+                low_energy_start = -1.0
+                state_seq[i] = state
+                continue
+
+            if ti - last_peak_t > NO_STEP_TIMEOUT and abs(x_d) < exit_th:
+                state = STATE_COOLDOWN
+                cadence_ema = None
+                cooldown_enter_t = ti
+                lockout_end_t = ti + COOLDOWN_TIME
+                low_energy_start = -1.0
+                state_seq[i] = state
+                continue
+            state_seq[i] = state
+            continue
+
+        if state == STATE_IDLE:
+            trig = (abs(x_d) > enter_th) or peak_candidate
+            if trig:
+                arm_confirm += 1
+            else:
+                arm_confirm = 0
+            if arm_confirm >= ARM_CONFIRM_N:
+                state = STATE_ARMING
+                arm_confirm = 0
+                arming_times.clear()
+                arming_indices.clear()
+
+        if state == STATE_ARMING:
+            if peak_candidate and t_peak >= WARMUP_TIME:
+                if len(arming_times) == 0:
+                    arming_times.append(t_peak)
+                    arming_indices.append(peak_idx)
+                else:
+                    dt = t_peak - arming_times[-1]
+                    if dt < CADENCE_FLOOR:
+                        pass
+                    elif dt > CADENCE_CEIL:
+                        state = STATE_IDLE
+                        arm_confirm = 0
+                        arming_times.clear()
+                        arming_indices.clear()
+                    else:
+                        arming_times.append(t_peak)
+                        arming_indices.append(peak_idx)
+                        if len(arming_times) >= 2:
+                            arming_dt1 = arming_times[-1] - arming_times[-2]
+                            consistent = arming_dt1 < 1.8 * CADENCE_CEIL
+                            if consistent:
+                                state = STATE_WALKING
+                                step_indices.extend(arming_indices)
+                                step_times.extend(arming_times)
+                                last_step_t = arming_times[-1]
+                                last_peak_t = last_step_t
+                                cadence_ema = None
+                                arming_times.clear()
+                                arming_indices.clear()
+                            else:
+                                arming_times[:] = [arming_times[-1]]
+                                arming_indices[:] = [arming_indices[-1]]
+
+        state_seq[i] = state
+
+    return step_indices, step_times, x_detrended, baseline_arr, state_seq
