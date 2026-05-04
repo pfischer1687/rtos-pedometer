@@ -47,24 +47,22 @@ git submodule add --depth 1 https://github.com/mbed-ce/mbed-os.git mbed-os
   - `DEBUG_STATUS`: collect debug info for tuning step detection thresholds
   - `DEBUG_START`: start a session and enable DSP streaming over USB
 
-## Debugging Unit Tests on Host Device
+### Example PuTTY Terminal Output:
 
-Unit tests are built and debugged on the host using CMake and LLDB.
-
-From the repo root run:
-
-```powershell
-.\scripts\host-debug.ps1
 ```
-
-This will:
-
-- Clean `test/build`
-- Configure using the `host-debug` CMake preset
-- Build the Debug configuration
-- Switch VS Code to the host debug launch configuration
-
-Then set your breakpoints and press F5.
+BOOT RTOS_THREADS
+> RESET
+OK
+> START
+OK
+> STOP
+OK
+> STATUS
+SESSION steps=25 duration_ms=36857 kcal=1 dist_m=19.05
+> DEBUG_STATUS
+OSC peaks=37 emitted=25 rejected=12
+>
+```
 
 ## Tools
 
@@ -91,6 +89,25 @@ uv run -m tools.run_host_checks [--test/-t] [--lint/-l] [--coverage/-c]
 - **`-c` / `--coverage`**: generate coverage report via lcov (assumes tests were run with coverage enabled).
 
 Flags can be combined (e.g. `-t -l`).
+
+#### Debugging Unit Tests on Host Device
+
+Unit tests are built and debugged on the host using CMake and LLDB.
+
+From the repo root run:
+
+```powershell
+.\scripts\host-debug.ps1
+```
+
+This will:
+
+- Clean `test/build`
+- Configure using the `host-debug` CMake preset
+- Build the Debug configuration
+- Switch VS Code to the host debug launch configuration
+
+Then set your breakpoints and press F5.
 
 ### Running HITL Tests
 
