@@ -233,9 +233,10 @@ void Application::stepDetectionThread() {
     signal_processing::ProcessedSample stepSample{};
     stepSample.magnitude = inMsg->accelMagnitudeG;
     stepSample.timestampUs = inMsg->sourceTimestampUs;
-    const step_detection::StepDecision decision =
+
+    const std::optional<step_detection::StepEvent> stepEvent =
         _oscillationTracker.processSample(stepSample);
-    if (!decision.event) {
+    if (!stepEvent) {
       continue;
     }
 
@@ -252,7 +253,7 @@ void Application::stepDetectionThread() {
     // (_m1)
     outMsg->sequence = inMsg->sequence;
 
-    outMsg->peakTimeUs = decision.event->timestampUs;
+    outMsg->peakTimeUs = stepEvent->timestampUs;
 
     _stepToSessionMail.put(out.releaseMsg());
     _sessionSignal.set(Config::EVENT_STEP_WAKE_SESSION);

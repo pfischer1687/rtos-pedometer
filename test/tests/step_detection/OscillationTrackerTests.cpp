@@ -13,6 +13,12 @@ namespace {
 constexpr platform::TickUs kTs = 10'000u;
 constexpr platform::TickUs kMinStepIntervalUs = 300'000u;
 
+/**
+ * @brief Create a processed sample with the given magnitude and timestamp.
+ * @param mag The magnitude of the sample.
+ * @param ts The timestamp of the sample.
+ * @return The processed sample.
+ */
 signal_processing::ProcessedSample magSample(float mag, platform::TickUs ts) {
   signal_processing::ProcessedSample s{};
   s.magnitude = mag;
@@ -23,6 +29,15 @@ signal_processing::ProcessedSample magSample(float mag, platform::TickUs ts) {
   return s;
 }
 
+/**
+ * @brief Feed a triangle cycle to the oscillation tracker.
+ * @param tr The oscillation tracker.
+ * @param tUs The current timestamp.
+ * @param samplesPerHalfCycle The number of samples per half cycle.
+ * @param baseMag The base magnitude.
+ * @param amplitude The amplitude.
+ * @param eventTimes The vector to store the event times.
+ */
 void feedTriangleCycle(step_detection::OscillationTracker &tr,
                        platform::TickUs &tUs, int samplesPerHalfCycle,
                        float baseMag, float amplitude,
@@ -31,9 +46,9 @@ void feedTriangleCycle(step_detection::OscillationTracker &tr,
     const float mag =
         baseMag + (amplitude / static_cast<float>(samplesPerHalfCycle)) *
                       static_cast<float>(i);
-    const auto d = tr.processSample(magSample(mag, tUs));
-    if (d.event && eventTimes != nullptr) {
-      eventTimes->push_back(d.event->timestampUs);
+    const auto ev = tr.processSample(magSample(mag, tUs));
+    if (ev && eventTimes != nullptr) {
+      eventTimes->push_back(ev->timestampUs);
     }
     tUs += kTs;
   }
@@ -42,18 +57,28 @@ void feedTriangleCycle(step_detection::OscillationTracker &tr,
     const float mag = (baseMag + amplitude) -
                       (amplitude / static_cast<float>(samplesPerHalfCycle)) *
                           static_cast<float>(i);
-    const auto d = tr.processSample(magSample(mag, tUs));
-    if (d.event && eventTimes != nullptr) {
-      eventTimes->push_back(d.event->timestampUs);
+    const auto ev = tr.processSample(magSample(mag, tUs));
+    if (ev && eventTimes != nullptr) {
+      eventTimes->push_back(ev->timestampUs);
     }
     tUs += kTs;
   }
 }
 
+/**
+ * @brief Create an oscillation tracker with a stricter refractory period.
+ * @return The oscillation tracker.
+ */
+step_detection::OscillationTracker make_tracker() {
+  step_detection::OscillationTrackerConfig cfg{};
+  cfg.min_step_dt = 0.30f;
+  return step_detection::OscillationTracker{cfg};
+}
+
 } // namespace
 
 TEST(OscillationTracker, FlatSignalProducesNoSteps) {
-  step_detection::OscillationTracker tr;
+  step_detection::OscillationTracker tr = make_tracker();
   platform::TickUs tUs = 0u;
   for (int i = 0; i < 200; ++i) {
     (void)tr.processSample(magSample(1.0f, tUs));
@@ -66,7 +91,7 @@ TEST(OscillationTracker, FlatSignalProducesNoSteps) {
 }
 
 TEST(OscillationTracker, NoiseSignalProducesNoSteps) {
-  step_detection::OscillationTracker tr;
+  step_detection::OscillationTracker tr = make_tracker();
   std::mt19937 rng(123456u);
   std::uniform_real_distribution<float> deltaStep(-0.001f, 0.001f);
 
@@ -90,7 +115,7 @@ TEST(OscillationTracker, NoiseSignalProducesNoSteps) {
 }
 
 TEST(OscillationTracker, TriangleWaveEmitsExpectedSteps) {
-  step_detection::OscillationTracker tr;
+  step_detection::OscillationTracker tr = make_tracker();
   platform::TickUs tUs = 0u;
   constexpr int kCycles = 3;
   constexpr int kSamplesPerHalfCycle = 40;
@@ -112,7 +137,7 @@ TEST(OscillationTracker, TriangleWaveEmitsExpectedSteps) {
 }
 
 TEST(OscillationTracker, StepIntervalEnforcement) {
-  step_detection::OscillationTracker tr;
+  step_detection::OscillationTracker tr = make_tracker();
   platform::TickUs tUs = 0u;
   std::vector<platform::TickUs> eventTimes;
 
@@ -132,7 +157,7 @@ TEST(OscillationTracker, StepIntervalEnforcement) {
 }
 
 TEST(OscillationTracker, StatsAccumulationAndReset) {
-  step_detection::OscillationTracker tr;
+  step_detection::OscillationTracker tr = make_tracker();
   platform::TickUs tUs = 0u;
   for (int c = 0; c < 4; ++c) {
     feedTriangleCycle(tr, tUs, 40, 1.0f, 0.40f);

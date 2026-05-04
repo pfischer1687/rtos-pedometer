@@ -12,7 +12,6 @@
 
 #include "platform/Platform.hpp"
 #include "rtos/Mutex.h"
-#include "step_detection/OscillationTracker.hpp"
 #include <cstddef>
 #include <cstdint>
 

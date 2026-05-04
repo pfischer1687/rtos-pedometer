@@ -251,9 +251,10 @@ private:
   imu::Mpu6050Driver &_imu;
   platform::IWatchdog &_watchdog;
   signal_processing::SignalProcessor _signalProcessor;
-  step_detection::OscillationTracker _oscillationTracker;
   session::SessionManager _sessionManager;
   led::RecordingLed _recordingLed{};
+  step_detection::OscillationTracker _oscillationTracker{
+      step_detection::OscillationTrackerConfig{}};
 
   // Single-producer (IMU thread only), lock-free ring buffer for IMU events.
   message_types::ImuEvent _imuEventLog[Config::IMU_EVENT_LOG_SIZE]{};

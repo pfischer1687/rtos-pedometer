@@ -1,115 +1,159 @@
 /**
  * @file step_detection/OscillationTracker.cpp
- * @brief Slope sign-change peak detector with Rising/Falling state machine.
+ * @brief Implementation of the step detection module.
  */
 
 #include "step_detection/OscillationTracker.hpp"
-#include "platform/Platform.hpp"
+#include <cmath>
 #include <cstdio>
-#include <optional>
 
 namespace step_detection {
 
 namespace {
 
-/**
- * @brief Check if the slope crossed from positive to negative and is above the
- * hysteresis threshold.
- * @param sPrev The previous slope.
- * @param sCurr The current slope.
- * @param hyst The hysteresis threshold.
- * @return True if the slope crossed from positive to negative and is above the
- * hysteresis threshold.
- */
-constexpr bool positiveToNegativePeak(float sPrev, float sCurr,
-                                      float hyst) noexcept {
-  if (!(sPrev > 0.0f) || !(sCurr < 0.0f)) {
-    return false;
-  }
+constexpr float S_PER_US = 1.0e-6f;
 
-  return (sPrev >= hyst) || ((-sCurr) >= hyst);
-}
+// NOTE: There is logic below dependent on this number being 3.
+constexpr std::size_t NUM_SAMPLES_FOR_PEAK = 3u;
 
-/**
- * @brief Check if the slope crossed from negative to positive and is above the
- * hysteresis threshold.
- * @param sPrev The previous slope.
- * @param sCurr The current slope.
- * @param hyst The hysteresis threshold.
- * @return True if the slope crossed from negative to positive and is above the
- * hysteresis threshold.
- */
-constexpr bool negativeToPositiveTrough(float sPrev, float sCurr,
-                                        float hyst) noexcept {
-  return (sPrev < 0.0f) && (sCurr >= hyst);
+[[nodiscard]] constexpr bool is_idle(float dt_s, bool have_last_step,
+                                     float idle_threshold_s) noexcept {
+  return have_last_step && (dt_s > idle_threshold_s);
 }
 
 } // namespace
 
-StepDecision OscillationTracker::processSample(
+OscillationTracker::OscillationTracker(OscillationTrackerConfig config) noexcept
+    : _cfg(config) {
+  const std::size_t minRingSize = _cfg.quiet_pre_n + NUM_SAMPLES_FOR_PEAK;
+  _ringCap = (minRingSize <= MAX_QUIET_RING) ? minRingSize : MAX_QUIET_RING;
+  _xdRing.fill(0.0f);
+}
+
+bool OscillationTracker::passesRefractory(float dt_s) const noexcept {
+  if (!_haveLastStep) {
+    return true;
+  }
+
+  return dt_s >= _cfg.min_step_dt;
+}
+
+bool OscillationTracker::passesQuietGate(std::size_t sampleIndex,
+                                         float dt_s) const noexcept {
+  if (!_acceptedAny) {
+    return true;
+  }
+  if (!is_idle(dt_s, _haveLastStep, _cfg.idle_threshold_s)) {
+    return true;
+  }
+  if (sampleIndex < 2u) {
+    return true;
+  }
+
+  const std::size_t peakIndex = sampleIndex - 1u;
+  const std::size_t quietWindowEnd = peakIndex - 1u;
+  const std::size_t quietWindowStart =
+      (peakIndex > _cfg.quiet_pre_n) ? peakIndex - _cfg.quiet_pre_n : 0u;
+  if (quietWindowEnd < quietWindowStart) {
+    return true;
+  }
+
+  const std::size_t count = quietWindowEnd - quietWindowStart + 1;
+  if (count < NUM_SAMPLES_FOR_PEAK) {
+    return true;
+  }
+
+  float sum = 0.0f;
+  for (std::size_t j = quietWindowStart; j <= quietWindowEnd; ++j) {
+    const std::size_t idx = j % _ringCap;
+    sum += std::fabs(_xdRing[idx]);
+  }
+
+  return (sum / static_cast<float>(count)) >= _cfg.quiet_abs;
+}
+
+bool OscillationTracker::passesShoulderFilter(float xd_im1,
+                                              float dt_s) const noexcept {
+  if (!is_idle(dt_s, _haveLastStep, _cfg.idle_threshold_s)) {
+    return true;
+  }
+  if (_prevPeakValue <= 0.0f) {
+    return true;
+  }
+
+  return std::fabs(xd_im1) >= (_cfg.peak_consistency_ratio * _prevPeakValue);
+}
+
+bool OscillationTracker::acceptPeak(std::size_t sampleIndex, float dt_s,
+                                    float xd_im1) const noexcept {
+  return passesRefractory(dt_s) && passesQuietGate(sampleIndex, dt_s) &&
+         passesShoulderFilter(xd_im1, dt_s);
+}
+
+std::optional<StepEvent> OscillationTracker::processSample(
     const signal_processing::ProcessedSample &sample) noexcept {
-  if (!_havePrevMag) {
-    _prevMag = sample.magnitude;
-    _havePrevMag = true;
-    return StepDecision{};
+  const float scaledMag = sample.magnitude * _cfg.mag_scale;
+  float detrended = 0.0f;
+
+  if (!_haveBaselineSeed) {
+    _baseline = scaledMag;
+    _haveBaselineSeed = true;
+  } else {
+    const float a = _cfg.ema_alpha;
+    _baseline = a * scaledMag + (1.0f - a) * _baseline;
+    detrended = scaledMag - _baseline;
   }
 
-  const float slope = sample.magnitude - _prevMag;
-
-  if (!_havePrevSlope) {
-    _prevSlope = slope;
-    _prevMag = sample.magnitude;
-    _havePrevSlope = true;
-    if (slope >= SLOPE_HYSTERESIS_G) {
-      _leg = OscLeg::Rising;
-    }
-    return StepDecision{};
+  if (_ringCap > 0u) {
+    _xdRing[_sampleIndex % _ringCap] = detrended;
   }
 
-  const float sPrev = _prevSlope;
-  const float sCurr = slope;
-
-  StepDecision out{};
-
-  switch (_leg) {
-  case OscLeg::SeekRise:
-    if (sCurr >= SLOPE_HYSTERESIS_G) {
-      _leg = OscLeg::Rising;
-    }
-    break;
-
-  case OscLeg::Rising:
-    if (positiveToNegativePeak(sPrev, sCurr, SLOPE_HYSTERESIS_G)) {
-      ++_dbg.peaks;
-      if (!_haveLastEmit ||
-          platform::elapsed(_lastStepEmitUs, sample.timestampUs) >=
-              MIN_STEP_INTERVAL) {
-        StepEvent ev{};
-        ev.timestampUs = sample.timestampUs;
-        ev.stepIndex = _stepIndex;
-        ++_stepIndex;
-        _lastStepEmitUs = sample.timestampUs;
-        _haveLastEmit = true;
-        ++_dbg.emitted;
-        out.event = ev;
-      } else {
-        ++_dbg.rejected;
-      }
-      _leg = OscLeg::Falling;
-    }
-    break;
-
-  case OscLeg::Falling:
-    if (negativeToPositiveTrough(sPrev, sCurr, SLOPE_HYSTERESIS_G)) {
-      _leg = OscLeg::Rising;
-    }
-    break;
+  if (_sampleIndex < 2u || _ringCap < 3u) {
+    _ts_im1 = sample.timestampUs;
+    ++_sampleIndex;
+    return std::nullopt;
   }
 
-  _prevSlope = sCurr;
-  _prevMag = sample.magnitude;
+  const float xd_im2 = _xdRing[(_sampleIndex - 2u) % _ringCap];
+  const float xd_im1 = _xdRing[(_sampleIndex - 1u) % _ringCap];
+  const float xd_i = _xdRing[_sampleIndex % _ringCap];
 
-  return out;
+  const bool isLocalPeak = (xd_im2 < xd_im1) && (xd_im1 > xd_i);
+  if (!isLocalPeak || std::fabs(xd_im1) < _cfg.peak_threshold) {
+    _ts_im1 = sample.timestampUs;
+    ++_sampleIndex;
+    return std::nullopt;
+  }
+
+  ++_dbg.peaks;
+
+  const platform::TickUs peakTs = _ts_im1;
+  const float dt_s =
+      _haveLastStep
+          ? static_cast<float>(platform::elapsed(_lastStepTsUs, peakTs)) *
+                S_PER_US
+          : 1.0e9f;
+
+  if (!acceptPeak(_sampleIndex, dt_s, xd_im1)) {
+    ++_dbg.rejected;
+    _ts_im1 = sample.timestampUs;
+    ++_sampleIndex;
+    return std::nullopt;
+  }
+
+  StepEvent ev{};
+  ev.timestampUs = peakTs;
+  ev.stepIndex = _stepIndex++;
+
+  ++_dbg.emitted;
+  _lastStepTsUs = peakTs;
+  _haveLastStep = true;
+  _acceptedAny = true;
+  _prevPeakValue = std::fabs(xd_im1);
+  _ts_im1 = sample.timestampUs;
+  ++_sampleIndex;
+
+  return ev;
 }
 
 std::size_t OscillationTracker::processBatch(
@@ -120,10 +164,10 @@ std::size_t OscillationTracker::processBatch(
   }
 
   std::size_t written = 0u;
-  for (std::size_t i = 0u; i < count && written < maxEvents; ++i) {
-    const StepDecision d = processSample(samples[i]);
-    if (d.event) {
-      events[written++] = *d.event;
+  for (std::size_t k = 0u; k < count && written < maxEvents; ++k) {
+    const std::optional<StepEvent> d = processSample(samples[k]);
+    if (d) {
+      events[written++] = d.value();
     }
   }
 
@@ -131,14 +175,16 @@ std::size_t OscillationTracker::processBatch(
 }
 
 void OscillationTracker::reset() noexcept {
-  _prevMag = 0.0f;
-  _prevSlope = 0.0f;
-  _havePrevMag = false;
-  _havePrevSlope = false;
-  _leg = OscLeg::SeekRise;
-  _lastStepEmitUs = 0u;
-  _haveLastEmit = false;
+  _baseline = 0.0f;
+  _xdRing.fill(0.0f);
+  _sampleIndex = 0u;
+  _haveBaselineSeed = false;
+  _lastStepTsUs = 0u;
+  _haveLastStep = false;
+  _prevPeakValue = 0.0f;
+  _acceptedAny = false;
   _stepIndex = 0u;
+  _ts_im1 = 0u;
   _dbg = StepDetectionDebugStats{};
 }
 
