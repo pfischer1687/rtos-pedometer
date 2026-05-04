@@ -36,9 +36,8 @@ constexpr rtos::Kernel::Clock::duration_u32 USB_IDLE_POLL_MS{1u};
 constexpr rtos::Kernel::Clock::duration_u32 WATCHDOG_KICK_INTERVAL_MS{500u};
 constexpr rtos::Kernel::Clock::duration_u32 LED_BACKOFF_MAX_MS{32u};
 
-constexpr uint32_t WATCHDOG_TIMEOUT_MS = 2000;                   // 2s
-constexpr uint32_t WATCHDOG_MAX_IMU_SILENCE_US = 20'000'000u;    // 20s
-constexpr uint32_t WATCHDOG_MAX_SESSION_SILENCE_US = 5'000'000u; // 5s
+constexpr uint32_t WATCHDOG_TIMEOUT_MS = 2000;                // 2s
+constexpr uint32_t WATCHDOG_MAX_IMU_SILENCE_US = 20'000'000u; // 20s
 
 } // namespace
 
@@ -395,8 +394,6 @@ void Application::sessionManagerThread() {
   };
 
   while (true) {
-    _sessionHeartbeatUs.store(platform::getTimeUs(), std::memory_order_relaxed);
-
     if (drain_once()) {
       continue;
     }
@@ -518,12 +515,6 @@ bool Application::isImuLive(const std::uint32_t now) const noexcept {
   return (imuSilenceUs <= WATCHDOG_MAX_IMU_SILENCE_US);
 }
 
-bool Application::isSessionHealthy(const std::uint32_t now) const noexcept {
-  const std::uint32_t sh = _sessionHeartbeatUs.load(std::memory_order_relaxed);
-  return (sh != 0U) &&
-         (platform::elapsed(sh, now) <= WATCHDOG_MAX_SESSION_SILENCE_US);
-}
-
 void Application::handleImuState(std::uint32_t now, ImuState s) noexcept {
   switch (s) {
 
@@ -562,7 +553,7 @@ void Application::watchdogThread() {
     const ImuState s = _imuState.load(std::memory_order_acquire);
     handleImuState(now, s);
 
-    if (isImuLive(now) && isSessionHealthy(now)) [[likely]] {
+    if (isImuLive(now)) [[likely]] {
       _watchdog.kick();
     }
     rtos::ThisThread::sleep_for(WATCHDOG_KICK_INTERVAL_MS);
@@ -570,8 +561,6 @@ void Application::watchdogThread() {
 }
 
 void Application::startThreads() noexcept {
-  _sessionHeartbeatUs.store(platform::getTimeUs(), std::memory_order_relaxed);
-
   osStatus s =
       _imuThread.start(callback(this, &Application::imuDataAcquisitionThread));
   MBED_ASSERT(s == osOK);

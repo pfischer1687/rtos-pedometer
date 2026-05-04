@@ -196,13 +196,6 @@ private:
   [[nodiscard]] bool isImuLive(std::uint32_t now) const noexcept;
 
   /**
-   * @brief Check if session is healthy.
-   * @param now Current time.
-   * @return True if session is healthy, false otherwise.
-   */
-  [[nodiscard]] bool isSessionHealthy(std::uint32_t now) const noexcept;
-
-  /**
    * @brief Handle IMU state.
    * @param now Current time.
    * @param s IMU state.
@@ -285,7 +278,6 @@ private:
   std::atomic<uint32_t> _sessionDropCount{0u};
   std::atomic<uint32_t> _usbDropCount{0u};
   std::atomic<led::LedState> _ledState{led::LedState::Idle};
-  std::atomic<uint32_t> _sessionHeartbeatUs{0u};
   std::atomic<uint32_t> _ledVersion{0u};
   std::atomic<uint32_t> _lastImuTickUs{0u};
   std::atomic<ImuState> _imuState{ImuState::Healthy};
