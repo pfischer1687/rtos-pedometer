@@ -284,3 +284,7 @@ host_build/
 tmp_errors/
 build-hitl/
 data/
+
+# Mbed OS-generated files
+.vscode/launch.json
+.vscode/tasks.json
