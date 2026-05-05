@@ -104,6 +104,28 @@ public:
   [[nodiscard]] std::size_t formatReport(char *buf,
                                          std::size_t size) const noexcept;
 
+  /**
+   * @brief Restore metrics from RTC backup snapshot after MCU reset.
+   * @param recording True if snapshot had an active session.
+   * @param stepCount Step count from snapshot.
+   * @param nowUs Current time for reconstructed timestamps.
+   */
+  void restoreFromRtcSnapshot(bool recording, std::uint32_t stepCount,
+                              platform::TickUs nowUs) noexcept;
+
+  /**
+   * @brief Full reset: idle, zero steps, cleared timestamps (RESET command).
+   */
+  void resetToIdle() noexcept;
+
+  /**
+   * @brief Read active flag and step count under one lock (RTC flush).
+   * @param outActive Output active flag.
+   * @param outStepCount Output step count.
+   */
+  void getRtcSnapshot(bool *outActive,
+                      std::uint32_t *outStepCount) const noexcept;
+
 private:
   mutable rtos::Mutex _mutex{};
   SessionMetrics _metrics{};

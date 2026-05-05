@@ -157,4 +157,35 @@ std::size_t SessionManager::formatReport(char *buf,
   return static_cast<std::size_t>(n);
 }
 
+void SessionManager::restoreFromRtcSnapshot(bool recording,
+                                            std::uint32_t stepCount,
+                                            platform::TickUs nowUs) noexcept {
+  rtos::ScopedMutexLock lock(_mutex);
+  _metrics.stepCount = stepCount;
+  if (recording) {
+    _metrics.state = SessionState::Active;
+    _metrics.startTimestampUs = nowUs;
+    _metrics.endTimestampUs = 0u;
+  } else {
+    _metrics.state = SessionState::Idle;
+    _metrics.startTimestampUs = nowUs;
+    _metrics.endTimestampUs = nowUs;
+  }
+}
+
+void SessionManager::resetToIdle() noexcept {
+  rtos::ScopedMutexLock lock(_mutex);
+  _metrics = SessionMetrics{};
+}
+
+void SessionManager::getRtcSnapshot(
+    bool *outActive, std::uint32_t *outStepCount) const noexcept {
+  if (outActive == nullptr || outStepCount == nullptr) {
+    return;
+  }
+  rtos::ScopedMutexLock lock(_mutex);
+  *outActive = (_metrics.state == SessionState::Active);
+  *outStepCount = _metrics.stepCount;
+}
+
 } // namespace session

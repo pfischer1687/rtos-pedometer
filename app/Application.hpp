@@ -92,6 +92,9 @@ private:
 
     static constexpr std::uint32_t SESSION_MAX_USB_PER_LOOP = 12u;
     static constexpr std::uint32_t SESSION_MAX_STEPS_PER_LOOP = 12u;
+
+    static constexpr std::uint32_t RTC_SNAPSHOT_FLUSH_MIN_INTERVAL_US =
+        3'000'000u;
   };
 
   /**
@@ -189,6 +192,31 @@ private:
   void updateSessionStateAndLED() noexcept;
 
   /**
+   * @brief Enable PWR/RTC backup register access (STM32F767).
+   */
+  void enableBackupDomain() noexcept;
+
+  /**
+   * @brief Restore SessionManager from RTC backup snapshot (pre-threads boot).
+   */
+  void loadRtcSnapshotIntoSession() noexcept;
+
+  /**
+   * @brief Write SessionManager snapshot to RTC backup registers; clears dirty.
+   */
+  void flushRtcSnapshotNow() noexcept;
+
+  /**
+   * @brief Periodic RTC snapshot if dirty and min interval elapsed.
+   */
+  void maybeTimeBasedRtcFlush() noexcept;
+
+  /**
+   * @brief Mark RTC snapshot stale (after step or session mutation).
+   */
+  void markPersistDirty() noexcept;
+
+  /**
    * @brief Check if IMU is live.
    * @param now Current time.
    * @return True if IMU is live, false otherwise.
@@ -244,7 +272,7 @@ private:
   imu::Mpu6050Driver &_imu;
   platform::IWatchdog &_watchdog;
   signal_processing::SignalProcessor _signalProcessor;
-  session::SessionManager _sessionManager;
+  session::SessionManager _sessionManager{};
   led::RecordingLed _recordingLed{};
   step_detection::OscillationTracker _oscillationTracker{
       step_detection::OscillationTrackerConfig{}};
@@ -282,6 +310,8 @@ private:
   std::atomic<uint32_t> _lastImuTickUs{0u};
   std::atomic<ImuState> _imuState{ImuState::Healthy};
   std::atomic<bool> _dspDebugStreamEnabled{false};
+  std::atomic<bool> _rtcSnapshotDirty{false};
+  std::atomic<platform::TickUs> _lastRtcFlushUs{0u};
 
   rtos::Thread _imuThread;
   rtos::Thread _signalThread;

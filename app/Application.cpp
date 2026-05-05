@@ -15,7 +15,6 @@
 #include "rtos/Mail.h"
 #include "rtos/ThisThread.h"
 #include "rtos/Thread.h"
-#include "session/SessionManager.hpp"
 #include "usb/UsbInterface.hpp"
 #include "usb/UsbTransport.hpp"
 #include <cstdint>
@@ -23,6 +22,12 @@
 #include <cstring>
 #include <optional>
 #include <string_view>
+
+#if defined(STM32F767xx)
+#include "stm32f7xx.h"
+#include "stm32f7xx_hal_pwr.h"
+#include "stm32f7xx_hal_rcc.h"
+#endif
 
 namespace app {
 
@@ -76,6 +81,51 @@ void Application::bringUpHardware() noexcept {
   MBED_ASSERT(platform::isOk(_imu.configure(config)));
 
   MBED_ASSERT(platform::isOk(_imu.startSampling()));
+}
+
+void Application::enableBackupDomain() noexcept {
+#if defined(STM32F767xx)
+  __HAL_RCC_PWR_CLK_ENABLE();
+  HAL_PWR_EnableBkUpAccess();
+#endif
+}
+
+void Application::loadRtcSnapshotIntoSession() noexcept {
+#if defined(STM32F767xx)
+  const bool recording = (RTC->BKP0R == 1u);
+  const std::uint32_t steps = RTC->BKP1R;
+  _sessionManager.restoreFromRtcSnapshot(recording, steps,
+                                         platform::getTimeUs());
+#endif
+}
+
+void Application::markPersistDirty() noexcept {
+  _rtcSnapshotDirty.store(true, std::memory_order_release);
+}
+
+void Application::flushRtcSnapshotNow() noexcept {
+#if defined(STM32F767xx)
+  bool active = false;
+  std::uint32_t steps = 0u;
+  _sessionManager.getRtcSnapshot(&active, &steps);
+  RTC->BKP0R = active ? 1u : 0u;
+  RTC->BKP1R = steps;
+#endif
+  _lastRtcFlushUs.store(platform::getTimeUs(), std::memory_order_release);
+  _rtcSnapshotDirty.store(false, std::memory_order_release);
+}
+
+void Application::maybeTimeBasedRtcFlush() noexcept {
+  if (!_rtcSnapshotDirty.load(std::memory_order_acquire)) {
+    return;
+  }
+  const std::uint32_t now = platform::getTimeUs();
+  const std::uint32_t last = _lastRtcFlushUs.load(std::memory_order_acquire);
+  if (platform::elapsed(last, now) <
+      Config::RTC_SNAPSHOT_FLUSH_MIN_INTERVAL_US) {
+    return;
+  }
+  flushRtcSnapshotNow();
 }
 
 void Application::logImuEvent(message_types::ImuEventType type,
@@ -304,12 +354,16 @@ Application::handleUsbCommandsUpTo(const std::uint32_t max) noexcept {
     switch (*inUsb.getMsg()) {
     case CommandId::Start: {
       const bool ok = _sessionManager.startSession(platform::getTimeUs());
+      if (ok) {
+        markPersistDirty();
+      }
       writeUsbResponse(ok ? "OK" : "FAIL", out.getMsg());
       break;
     }
     case CommandId::Stop: {
-      const bool ok = _sessionManager.stopSession(platform::getTimeUs());
       _dspDebugStreamEnabled.store(false, std::memory_order_relaxed);
+      const bool ok = _sessionManager.stopSession(platform::getTimeUs());
+      flushRtcSnapshotNow();
       writeUsbResponse(ok ? "OK" : "FAIL", out.getMsg());
       break;
     }
@@ -336,6 +390,7 @@ Application::handleUsbCommandsUpTo(const std::uint32_t max) noexcept {
     case CommandId::DebugStart: {
       const bool ok = _sessionManager.startSession(platform::getTimeUs());
       if (ok) {
+        markPersistDirty();
         _dspDebugStreamEnabled.store(true, std::memory_order_relaxed);
       }
       writeUsbResponse(ok ? "OK" : "FAIL", out.getMsg());
@@ -347,7 +402,8 @@ Application::handleUsbCommandsUpTo(const std::uint32_t max) noexcept {
       _imuSeq.store(0, std::memory_order_release);
       _imuEventCount.store(0, std::memory_order_release);
       _oscillationTracker.resetDebugStats();
-      (void)_sessionManager.stopSession(platform::getTimeUs());
+      _sessionManager.resetToIdle();
+      flushRtcSnapshotNow();
       writeUsbResponse("OK", out.getMsg());
       break;
     default:
@@ -380,17 +436,21 @@ Application::handleStepEventsUpTo(const std::uint32_t max) noexcept {
     }
 
     _sessionManager.onStep();
+    markPersistDirty();
   }
   return n;
 }
 
 void Application::sessionManagerThread() {
   auto drain_once = [&] {
-    std::uint32_t usb = handleUsbCommandsUpTo(Config::SESSION_MAX_USB_PER_LOOP);
+    maybeTimeBasedRtcFlush();
+    const std::uint32_t usb =
+        handleUsbCommandsUpTo(Config::SESSION_MAX_USB_PER_LOOP);
     updateSessionStateAndLED();
-    std::uint32_t step =
+    const std::uint32_t step =
         handleStepEventsUpTo(Config::SESSION_MAX_STEPS_PER_LOOP);
-    return usb || step;
+    maybeTimeBasedRtcFlush();
+    return (usb != 0u) || (step != 0u);
   };
 
   while (true) {
@@ -580,6 +640,19 @@ void Application::startThreads() noexcept {
 }
 
 [[noreturn]] void Application::run() noexcept {
+  enableBackupDomain();
+  loadRtcSnapshotIntoSession();
+  _lastRtcFlushUs.store(platform::getTimeUs(), std::memory_order_release);
+  _rtcSnapshotDirty.store(false, std::memory_order_release);
+
+  {
+    const led::LedState led = _sessionManager.isActive() ? led::LedState::Active
+                                                         : led::LedState::Idle;
+    _ledState.store(led, std::memory_order_release);
+    _ledVersion.fetch_add(1, std::memory_order_acq_rel);
+    _recordingLed.apply(led);
+  }
+
   bringUpHardware();
   startThreads();
 

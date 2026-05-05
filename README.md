@@ -17,6 +17,7 @@ detection on an STM32 Nucleo-F767ZI board with an MPU-6050 IMU.
 - Session management via USB interface
 - Dedicated RTOS threads with IPC via lock-free mail queues and event signals
 - LED state indication
+- Step count is persisted across MCU resets using RTC backup registers.
 - Testing:
   - Unit testing for the IMU driver, DSP pipeline and step detection algorithm
   - HITL testing for the IMU driver
@@ -43,13 +44,13 @@ git submodule add --depth 1 https://github.com/mbed-ce/mbed-os.git mbed-os
   - `START`: begin session
   - `STOP`: end session
   - `STATUS`: query current session metrics
-  - `RESET`: reset step count and session
+  - `RESET`: reset step count and session (including RTC backup registers)
   - `DEBUG_STATUS`: collect debug info for tuning step detection thresholds
   - `DEBUG_START`: start a session and enable DSP streaming over USB
 
-### Example PuTTY Terminal Output:
+### Example PuTTY Terminal Output
 
-```
+```text
 BOOT RTOS_THREADS
 > RESET
 OK
