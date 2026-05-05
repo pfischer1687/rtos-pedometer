@@ -29,6 +29,7 @@ set(APP_SOURCES
     main.cpp
     app/Application.cpp
     app/Command.cpp
+    rtc/RtcSessionStore.cpp
     platform/Platform.cpp
     platform/Gpio.cpp
     platform/I2CProvider.cpp

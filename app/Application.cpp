@@ -10,11 +10,15 @@
 #include "mbed_assert.h"
 #include "platform/Callback.h"
 #include "platform/Platform.hpp"
+#include "rtc/RtcSessionStore.hpp"
 #include "rtos/EventFlags.h"
 #include "rtos/Kernel.h"
 #include "rtos/Mail.h"
 #include "rtos/ThisThread.h"
 #include "rtos/Thread.h"
+#include "stm32f7xx.h"
+#include "stm32f7xx_hal_pwr.h"
+#include "stm32f7xx_hal_rcc.h"
 #include "usb/UsbInterface.hpp"
 #include "usb/UsbTransport.hpp"
 #include <cstdint>
@@ -22,12 +26,6 @@
 #include <cstring>
 #include <optional>
 #include <string_view>
-
-#if defined(STM32F767xx)
-#include "stm32f7xx.h"
-#include "stm32f7xx_hal_pwr.h"
-#include "stm32f7xx_hal_rcc.h"
-#endif
 
 namespace app {
 
@@ -41,10 +39,34 @@ constexpr rtos::Kernel::Clock::duration_u32 USB_IDLE_POLL_MS{1u};
 constexpr rtos::Kernel::Clock::duration_u32 WATCHDOG_KICK_INTERVAL_MS{500u};
 constexpr rtos::Kernel::Clock::duration_u32 LED_BACKOFF_MAX_MS{32u};
 
-constexpr uint32_t WATCHDOG_TIMEOUT_MS = 2000;                // 2s
-constexpr uint32_t WATCHDOG_MAX_IMU_SILENCE_US = 20'000'000u; // 20s
+constexpr uint32_t WATCHDOG_TIMEOUT_MS = 8000u;                     // 8s
+constexpr uint32_t WATCHDOG_MAX_IMU_SILENCE_US = 20'000'000u;       // 20s
+constexpr uint32_t RTC_SNAPSHOT_FLUSH_MIN_INTERVAL_US = 3'000'000u; // 3s
+
+/**
+ * @brief Drain a mail queue.
+ * @param mail Mail queue.
+ */
+template <typename T, std::uint32_t N>
+void drainMailQueue(rtos::Mail<T, N> &mail) noexcept {
+  while (true) {
+    T *p = mail.try_get();
+    if (p == nullptr) {
+      break;
+    }
+
+    (void)mail.free(p);
+  }
+}
 
 } // namespace
+
+void Application::resetIpcAfterUserReset() noexcept {
+  drainMailQueue(_sensorToSignalMail);
+  drainMailQueue(_signalToStepMail);
+  drainMailQueue(_stepToSessionMail);
+  drainMailQueue(_usbToSessionMail);
+}
 
 Application::Application(imu::Mpu6050Driver &imu,
                          platform::IWatchdog &watchdog) noexcept
@@ -84,48 +106,41 @@ void Application::bringUpHardware() noexcept {
 }
 
 void Application::enableBackupDomain() noexcept {
-#if defined(STM32F767xx)
   __HAL_RCC_PWR_CLK_ENABLE();
   HAL_PWR_EnableBkUpAccess();
-#endif
 }
 
 void Application::loadRtcSnapshotIntoSession() noexcept {
-#if defined(STM32F767xx)
-  const bool recording = (RTC->BKP0R == 1u);
-  const std::uint32_t steps = RTC->BKP1R;
-  _sessionManager.restoreFromRtcSnapshot(recording, steps,
-                                         platform::getTimeUs());
-#endif
-}
+  const std::uint32_t csr = RCC->CSR;
+  const bool coldPowerOrBrownout =
+      (csr & (RCC_CSR_PORRSTF | RCC_CSR_BORRSTF)) != 0u;
+  __HAL_RCC_CLEAR_RESET_FLAGS();
 
-void Application::markPersistDirty() noexcept {
-  _rtcSnapshotDirty.store(true, std::memory_order_release);
-}
-
-void Application::flushRtcSnapshotNow() noexcept {
-#if defined(STM32F767xx)
-  bool active = false;
-  std::uint32_t steps = 0u;
-  _sessionManager.getRtcSnapshot(&active, &steps);
-  RTC->BKP0R = active ? 1u : 0u;
-  RTC->BKP1R = steps;
-#endif
-  _lastRtcFlushUs.store(platform::getTimeUs(), std::memory_order_release);
-  _rtcSnapshotDirty.store(false, std::memory_order_release);
-}
-
-void Application::maybeTimeBasedRtcFlush() noexcept {
-  if (!_rtcSnapshotDirty.load(std::memory_order_acquire)) {
+  if (coldPowerOrBrownout) [[unlikely]] {
+    _sessionManager.resetToIdle();
+    rtc::invalidate();
     return;
   }
-  const std::uint32_t now = platform::getTimeUs();
-  const std::uint32_t last = _lastRtcFlushUs.load(std::memory_order_acquire);
-  if (platform::elapsed(last, now) <
-      Config::RTC_SNAPSHOT_FLUSH_MIN_INTERVAL_US) {
+
+  rtc::Snapshot snap;
+
+  if (!rtc::load(snap)) {
+    _sessionManager.resetToIdle();
+    rtc::invalidate();
     return;
   }
-  flushRtcSnapshotNow();
+  if (!_sessionManager.restoreFromRtcSnapshot(snap.active, snap.steps,
+                                              snap.startUs, snap.endUs)) {
+    rtc::invalidate();
+    return;
+  }
+}
+
+void Application::writeRtcSnapshotRegistersUnconditionally() noexcept {
+  rtc::Snapshot snap;
+  _sessionManager.getRtcPersistSnapshot(&snap.active, &snap.steps,
+                                        &snap.startUs, &snap.endUs);
+  rtc::store(snap);
 }
 
 void Application::logImuEvent(message_types::ImuEventType type,
@@ -213,6 +228,9 @@ void Application::tryAcquireAndSendImuSample() noexcept {
 void Application::imuDataAcquisitionThread() {
   while (true) {
     tryAcquireAndSendImuSample();
+    const std::uint32_t now = platform::getTimeUs();
+    const ImuState s = _imuState.load(std::memory_order_acquire);
+    handleImuState(now, s);
     rtos::ThisThread::sleep_for(IMU_DATA_NOT_READY_BACKOFF_MS);
   }
 }
@@ -289,10 +307,11 @@ void Application::stepDetectionThread() {
       continue;
     }
 
-    MailHandle<message_types::StepDetectionEvent, Config::MAIL_DEPTH> out{
+    MailHandle<message_types::StepDetectionEvent, Config::STEP_MAIL_DEPTH> out{
         _stepToSessionMail};
     if (!out) [[unlikely]] {
       _stepDropCount.fetch_add(1, std::memory_order_relaxed);
+      _sessionSignal.set(Config::EVENT_STEP_WAKE_SESSION);
       continue;
     }
 
@@ -355,7 +374,7 @@ Application::handleUsbCommandsUpTo(const std::uint32_t max) noexcept {
     case CommandId::Start: {
       const bool ok = _sessionManager.startSession(platform::getTimeUs());
       if (ok) {
-        markPersistDirty();
+        writeRtcSnapshotRegistersUnconditionally();
       }
       writeUsbResponse(ok ? "OK" : "FAIL", out.getMsg());
       break;
@@ -363,7 +382,9 @@ Application::handleUsbCommandsUpTo(const std::uint32_t max) noexcept {
     case CommandId::Stop: {
       _dspDebugStreamEnabled.store(false, std::memory_order_relaxed);
       const bool ok = _sessionManager.stopSession(platform::getTimeUs());
-      flushRtcSnapshotNow();
+      if (ok) {
+        writeRtcSnapshotRegistersUnconditionally();
+      }
       writeUsbResponse(ok ? "OK" : "FAIL", out.getMsg());
       break;
     }
@@ -390,7 +411,7 @@ Application::handleUsbCommandsUpTo(const std::uint32_t max) noexcept {
     case CommandId::DebugStart: {
       const bool ok = _sessionManager.startSession(platform::getTimeUs());
       if (ok) {
-        markPersistDirty();
+        writeRtcSnapshotRegistersUnconditionally();
         _dspDebugStreamEnabled.store(true, std::memory_order_relaxed);
       }
       writeUsbResponse(ok ? "OK" : "FAIL", out.getMsg());
@@ -401,9 +422,16 @@ Application::handleUsbCommandsUpTo(const std::uint32_t max) noexcept {
       _imuDropCount.store(0, std::memory_order_release);
       _imuSeq.store(0, std::memory_order_release);
       _imuEventCount.store(0, std::memory_order_release);
-      _oscillationTracker.resetDebugStats();
+      resetIpcAfterUserReset();
       _sessionManager.resetToIdle();
-      flushRtcSnapshotNow();
+      _oscillationTracker.reset();
+      _oscillationTracker.resetDebugStats();
+      _signalDropCount.store(0, std::memory_order_relaxed);
+      _stepDropCount.store(0, std::memory_order_relaxed);
+      _sessionDropCount.store(0, std::memory_order_relaxed);
+      rtc::invalidate();
+      writeRtcSnapshotRegistersUnconditionally();
+      _sessionSignal.set(Config::EVENT_USB_WAKE_SESSION);
       writeUsbResponse("OK", out.getMsg());
       break;
     default:
@@ -435,33 +463,40 @@ Application::handleStepEventsUpTo(const std::uint32_t max) noexcept {
       break;
     }
 
-    _sessionManager.onStep();
-    markPersistDirty();
+    MailHandle<message_types::StepDetectionEvent, Config::STEP_MAIL_DEPTH> in{
+        _stepToSessionMail, rawInStep};
+    (void)_sessionManager.acceptStep(in.getMsg()->peakTimeUs);
   }
   return n;
 }
 
 void Application::sessionManagerThread() {
   auto drain_once = [&] {
-    maybeTimeBasedRtcFlush();
+    const std::uint32_t step =
+        handleStepEventsUpTo(Config::SESSION_MAX_STEPS_PER_LOOP);
     const std::uint32_t usb =
         handleUsbCommandsUpTo(Config::SESSION_MAX_USB_PER_LOOP);
     updateSessionStateAndLED();
-    const std::uint32_t step =
-        handleStepEventsUpTo(Config::SESSION_MAX_STEPS_PER_LOOP);
-    maybeTimeBasedRtcFlush();
     return (usb != 0u) || (step != 0u);
   };
 
+  std::uint32_t lastPersistUs = platform::getTimeUs();
+
   while (true) {
+    const std::uint32_t now = platform::getTimeUs();
+    if (_sessionManager.isActive()) {
+      if (platform::elapsed(lastPersistUs, now) >=
+          RTC_SNAPSHOT_FLUSH_MIN_INTERVAL_US) {
+        writeRtcSnapshotRegistersUnconditionally();
+        lastPersistUs = now;
+      }
+    }
     if (drain_once()) {
       continue;
     }
-
     if (!waitOnSessionWakeup()) {
       continue;
     }
-
     if (drain_once()) {
       continue;
     }
@@ -568,13 +603,6 @@ Application::getImuHealthSnapshot() const noexcept {
                                           .bufferedEvents = buffered};
 }
 
-bool Application::isImuLive(const std::uint32_t now) const noexcept {
-  const std::uint32_t lastImuUs =
-      _lastImuTickUs.load(std::memory_order_acquire);
-  const std::uint32_t imuSilenceUs = platform::elapsed(lastImuUs, now);
-  return (imuSilenceUs <= WATCHDOG_MAX_IMU_SILENCE_US);
-}
-
 void Application::handleImuState(std::uint32_t now, ImuState s) noexcept {
   switch (s) {
 
@@ -609,13 +637,7 @@ void Application::watchdogThread() {
   MBED_ASSERT(platform::isOk(_watchdog.start(WATCHDOG_TIMEOUT_MS)));
 
   while (true) {
-    const std::uint32_t now = platform::getTimeUs();
-    const ImuState s = _imuState.load(std::memory_order_acquire);
-    handleImuState(now, s);
-
-    if (isImuLive(now)) [[likely]] {
-      _watchdog.kick();
-    }
+    _watchdog.kick();
     rtos::ThisThread::sleep_for(WATCHDOG_KICK_INTERVAL_MS);
   }
 }
@@ -642,8 +664,6 @@ void Application::startThreads() noexcept {
 [[noreturn]] void Application::run() noexcept {
   enableBackupDomain();
   loadRtcSnapshotIntoSession();
-  _lastRtcFlushUs.store(platform::getTimeUs(), std::memory_order_release);
-  _rtcSnapshotDirty.store(false, std::memory_order_release);
 
   {
     const led::LedState led = _sessionManager.isActive() ? led::LedState::Active

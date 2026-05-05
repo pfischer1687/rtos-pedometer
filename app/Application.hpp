@@ -27,8 +27,8 @@ namespace app {
  * @enum ImuState
  * @brief IMU health and recovery
  * @details
- * - watchdog single-owner
- * - acquire thread is read-only
+ * - IMU acquisition thread owns state transitions and recovery (I2C reset).
+ * - Hardware watchdog is independent of IMU health.
  */
 enum class ImuState : std::uint8_t { Healthy, Recovering };
 
@@ -75,6 +75,7 @@ private:
    */
   struct Config {
     static constexpr uint32_t MAIL_DEPTH = 32u;
+    static constexpr uint32_t STEP_MAIL_DEPTH = 64u;
 
     static constexpr uint32_t EVENT_USB_WAKE_SESSION = 1u << 0;
     static constexpr uint32_t EVENT_STEP_WAKE_SESSION = 1u << 1;
@@ -91,10 +92,7 @@ private:
     static constexpr std::size_t IMU_EVENT_LOG_SIZE = 32u;
 
     static constexpr std::uint32_t SESSION_MAX_USB_PER_LOOP = 12u;
-    static constexpr std::uint32_t SESSION_MAX_STEPS_PER_LOOP = 12u;
-
-    static constexpr std::uint32_t RTC_SNAPSHOT_FLUSH_MIN_INTERVAL_US =
-        3'000'000u;
+    static constexpr std::uint32_t SESSION_MAX_STEPS_PER_LOOP = STEP_MAIL_DEPTH;
   };
 
   /**
@@ -145,7 +143,7 @@ private:
   void ledManagerThread();
 
   /**
-   * @brief Thread implementing a watchdog for IMU data silence.
+   * @brief Thread that periodically kicks the hardware watchdog.
    */
   void watchdogThread();
 
@@ -202,26 +200,14 @@ private:
   void loadRtcSnapshotIntoSession() noexcept;
 
   /**
-   * @brief Write SessionManager snapshot to RTC backup registers; clears dirty.
+   * @brief Write RTC backup registers from current SessionManager state.
    */
-  void flushRtcSnapshotNow() noexcept;
+  void writeRtcSnapshotRegistersUnconditionally() noexcept;
 
   /**
-   * @brief Periodic RTC snapshot if dirty and min interval elapsed.
+   * @brief Drain motion/USB command mail and clear session wake flags (RESET).
    */
-  void maybeTimeBasedRtcFlush() noexcept;
-
-  /**
-   * @brief Mark RTC snapshot stale (after step or session mutation).
-   */
-  void markPersistDirty() noexcept;
-
-  /**
-   * @brief Check if IMU is live.
-   * @param now Current time.
-   * @return True if IMU is live, false otherwise.
-   */
-  [[nodiscard]] bool isImuLive(std::uint32_t now) const noexcept;
+  void resetIpcAfterUserReset() noexcept;
 
   /**
    * @brief Handle IMU state.
@@ -294,7 +280,7 @@ private:
       _sensorToSignalMail;
   rtos::Mail<message_types::ProcessedImuDataFrame, Config::MAIL_DEPTH>
       _signalToStepMail;
-  rtos::Mail<message_types::StepDetectionEvent, Config::MAIL_DEPTH>
+  rtos::Mail<message_types::StepDetectionEvent, Config::STEP_MAIL_DEPTH>
       _stepToSessionMail;
   rtos::Mail<CommandId, Config::MAIL_DEPTH> _usbToSessionMail;
   rtos::Mail<message_types::UsbResponse, Config::MAIL_DEPTH> _sessionToUsbMail;
@@ -310,8 +296,6 @@ private:
   std::atomic<uint32_t> _lastImuTickUs{0u};
   std::atomic<ImuState> _imuState{ImuState::Healthy};
   std::atomic<bool> _dspDebugStreamEnabled{false};
-  std::atomic<bool> _rtcSnapshotDirty{false};
-  std::atomic<platform::TickUs> _lastRtcFlushUs{0u};
 
   rtos::Thread _imuThread;
   rtos::Thread _signalThread;

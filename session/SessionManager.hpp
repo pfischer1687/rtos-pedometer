@@ -73,9 +73,12 @@ public:
   [[nodiscard]] bool stopSession(platform::TickUs stopTimestampUs) noexcept;
 
   /**
-   * @brief Handler for step detection events.
+   * @brief Accept a step if the session is active and the peak time is not
+   * before the session start.
+   * @param stepTimeUs Step peak timestamp (microseconds).
+   * @return True if the step was counted, false otherwise.
    */
-  void onStep() noexcept;
+  [[nodiscard]] bool acceptStep(platform::TickUs stepTimeUs) noexcept;
 
   /**
    * @brief Get the step count.
@@ -108,10 +111,14 @@ public:
    * @brief Restore metrics from RTC backup snapshot after MCU reset.
    * @param recording True if snapshot had an active session.
    * @param stepCount Step count from snapshot.
-   * @param nowUs Current time for reconstructed timestamps.
+   * @param startTimestampUs Session start timestamp from snapshot.
+   * @param endTimestampUs Session end timestamp from snapshot (0 if active).
+   * @return False if snapshot fields were inconsistent (manager left idle).
    */
-  void restoreFromRtcSnapshot(bool recording, std::uint32_t stepCount,
-                              platform::TickUs nowUs) noexcept;
+  [[nodiscard]] bool
+  restoreFromRtcSnapshot(bool recording, std::uint32_t stepCount,
+                         platform::TickUs startTimestampUs,
+                         platform::TickUs endTimestampUs) noexcept;
 
   /**
    * @brief Full reset: idle, zero steps, cleared timestamps (RESET command).
@@ -119,12 +126,15 @@ public:
   void resetToIdle() noexcept;
 
   /**
-   * @brief Read active flag and step count under one lock (RTC flush).
+   * @brief Read fields persisted to RTC under one lock.
    * @param outActive Output active flag.
    * @param outStepCount Output step count.
+   * @param outStartUs Output session start timestamp (us).
+   * @param outEndUs Output session end when idle; 0 when active.
    */
-  void getRtcSnapshot(bool *outActive,
-                      std::uint32_t *outStepCount) const noexcept;
+  void getRtcPersistSnapshot(bool *outActive, std::uint32_t *outStepCount,
+                             platform::TickUs *outStartUs,
+                             platform::TickUs *outEndUs) const noexcept;
 
 private:
   mutable rtos::Mutex _mutex{};

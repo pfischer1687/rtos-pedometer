@@ -64,6 +64,74 @@ void resetMetricsForNewSession(SessionMetrics &m,
   m.endTimestampUs = 0u;
 }
 
+/**
+ * @brief Check if the session is empty by step count and start timestamp.
+ * @param stepCount Step count.
+ * @param startUs Start timestamp.
+ * @return True if the session is empty, false otherwise.
+ */
+[[nodiscard]] constexpr bool
+isEmptyByStepsAndStart(std::uint32_t stepCount,
+                       platform::TickUs startUs) noexcept {
+  return stepCount == 0u && startUs == 0u;
+}
+
+/**
+ * @brief Calculate the elapsed duration between two timestamps.
+ * @param startUs Start timestamp.
+ * @param endUs End timestamp.
+ * @return Elapsed duration in microseconds.
+ */
+[[nodiscard]] constexpr platform::TickUs
+elapsedDurationUsOrZero(platform::TickUs startUs,
+                        platform::TickUs endUs) noexcept {
+  if (startUs == 0u) {
+    return 0u;
+  }
+  if (endUs < startUs) {
+    return 0u;
+  }
+  return platform::elapsed(startUs, endUs);
+}
+
+/**
+ * @brief Check if the snapshot is a valid recording.
+ * @param startUs Start timestamp.
+ * @param endUs End timestamp.
+ * @return True if the snapshot is a valid recording, false otherwise.
+ */
+[[nodiscard]] constexpr bool
+isValidRecordingSnapshot(platform::TickUs startUs,
+                         platform::TickUs endUs) noexcept {
+  return startUs != 0u && endUs == 0u;
+}
+
+/**
+ * @brief Check if the snapshot is a fully zero completed snapshot.
+ * @param stepCount Step count.
+ * @param startUs Start timestamp.
+ * @param endUs End timestamp.
+ * @return True if the snapshot is a fully zero completed snapshot, false
+ * otherwise.
+ */
+[[nodiscard]] constexpr bool
+isFullyZeroCompletedSnapshot(std::uint32_t stepCount, platform::TickUs startUs,
+                             platform::TickUs endUs) noexcept {
+  return stepCount == 0u && startUs == 0u && endUs == 0u;
+}
+
+/**
+ * @brief Check if the snapshot is a valid completed snapshot.
+ * @param startUs Start timestamp.
+ * @param endUs End timestamp.
+ * @return True if the snapshot is a valid completed snapshot, false otherwise.
+ */
+[[nodiscard]] constexpr bool
+isValidCompletedSnapshot(platform::TickUs startUs,
+                         platform::TickUs endUs) noexcept {
+  return startUs != 0u && endUs != 0u && endUs >= startUs;
+}
+
 } // anonymous namespace
 
 bool SessionManager::startSession(platform::TickUs startTimestampUs) noexcept {
@@ -82,18 +150,27 @@ bool SessionManager::stopSession(platform::TickUs stopTimestampUs) noexcept {
     return false;
   }
 
-  _metrics.endTimestampUs = stopTimestampUs;
+  platform::TickUs endUs = stopTimestampUs;
+  if (endUs < _metrics.startTimestampUs) [[unlikely]] {
+    endUs = _metrics.startTimestampUs;
+  }
+
+  _metrics.endTimestampUs = endUs;
   _metrics.state = SessionState::Idle;
   return true;
 }
 
-void SessionManager::onStep() noexcept {
+bool SessionManager::acceptStep(platform::TickUs stepTimeUs) noexcept {
   rtos::ScopedMutexLock lock(_mutex);
   if (_metrics.state != SessionState::Active) {
-    return;
+    return false;
+  }
+  if (stepTimeUs < _metrics.startTimestampUs) {
+    return false;
   }
 
   ++_metrics.stepCount;
+  return true;
 }
 
 uint32_t SessionManager::getStepCount() const noexcept {
@@ -111,22 +188,18 @@ SessionReport SessionManager::getReport() const noexcept {
   SessionReport report{};
   report.steps = _metrics.stepCount;
 
-  bool noSessionsHaveBeenStarted =
-      _metrics.startTimestampUs == 0u ||
-      (_metrics.state == SessionState::Idle &&
-       _metrics.endTimestampUs <= _metrics.startTimestampUs);
-  if (noSessionsHaveBeenStarted) {
+  if (isEmptyByStepsAndStart(_metrics.stepCount, _metrics.startTimestampUs)) {
     report.durationMs = 0u;
     report.calories = 0u;
     report.distanceMeters = 0.0f;
     return report;
   }
 
-  platform::TickUs endUs = _metrics.state == SessionState::Active
-                               ? platform::getTimeUs()
-                               : _metrics.endTimestampUs;
+  const platform::TickUs endUs = _metrics.state == SessionState::Active
+                                     ? platform::getTimeUs()
+                                     : _metrics.endTimestampUs;
   const platform::TickUs elapsedUs =
-      platform::elapsed(_metrics.startTimestampUs, endUs);
+      elapsedDurationUsOrZero(_metrics.startTimestampUs, endUs);
 
   report.durationMs = static_cast<uint32_t>(elapsedUs / US_PER_MS);
   report.calories = static_cast<uint32_t>(
@@ -157,20 +230,42 @@ std::size_t SessionManager::formatReport(char *buf,
   return static_cast<std::size_t>(n);
 }
 
-void SessionManager::restoreFromRtcSnapshot(bool recording,
-                                            std::uint32_t stepCount,
-                                            platform::TickUs nowUs) noexcept {
+bool SessionManager::restoreFromRtcSnapshot(
+    bool recording, std::uint32_t stepCount, platform::TickUs startTimestampUs,
+    platform::TickUs endTimestampUs) noexcept {
   rtos::ScopedMutexLock lock(_mutex);
-  _metrics.stepCount = stepCount;
+
   if (recording) {
+    if (!isValidRecordingSnapshot(startTimestampUs, endTimestampUs))
+        [[unlikely]] {
+      _metrics = SessionMetrics{};
+      return false;
+    }
+
     _metrics.state = SessionState::Active;
-    _metrics.startTimestampUs = nowUs;
+    _metrics.stepCount = stepCount;
+    _metrics.startTimestampUs = startTimestampUs;
     _metrics.endTimestampUs = 0u;
-  } else {
-    _metrics.state = SessionState::Idle;
-    _metrics.startTimestampUs = nowUs;
-    _metrics.endTimestampUs = nowUs;
+    return true;
   }
+
+  if (isFullyZeroCompletedSnapshot(stepCount, startTimestampUs,
+                                   endTimestampUs)) {
+    _metrics = SessionMetrics{};
+    return true;
+  }
+
+  if (!isValidCompletedSnapshot(startTimestampUs, endTimestampUs))
+      [[unlikely]] {
+    _metrics = SessionMetrics{};
+    return false;
+  }
+
+  _metrics.state = SessionState::Idle;
+  _metrics.stepCount = stepCount;
+  _metrics.startTimestampUs = startTimestampUs;
+  _metrics.endTimestampUs = endTimestampUs;
+  return true;
 }
 
 void SessionManager::resetToIdle() noexcept {
@@ -178,14 +273,20 @@ void SessionManager::resetToIdle() noexcept {
   _metrics = SessionMetrics{};
 }
 
-void SessionManager::getRtcSnapshot(
-    bool *outActive, std::uint32_t *outStepCount) const noexcept {
-  if (outActive == nullptr || outStepCount == nullptr) {
+void SessionManager::getRtcPersistSnapshot(
+    bool *outActive, std::uint32_t *outStepCount, platform::TickUs *outStartUs,
+    platform::TickUs *outEndUs) const noexcept {
+  if (outActive == nullptr || outStepCount == nullptr ||
+      outStartUs == nullptr || outEndUs == nullptr) {
     return;
   }
+
   rtos::ScopedMutexLock lock(_mutex);
   *outActive = (_metrics.state == SessionState::Active);
   *outStepCount = _metrics.stepCount;
+  *outStartUs = _metrics.startTimestampUs;
+  *outEndUs =
+      (_metrics.state == SessionState::Active) ? 0u : _metrics.endTimestampUs;
 }
 
 } // namespace session
